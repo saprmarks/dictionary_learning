@@ -1,1 +1,1 @@
-# dictionary-learning
+This is a repo for infrastructure related to training dictionaries for feature disentanglement.
