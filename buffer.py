@@ -8,9 +8,16 @@ from nnsight import LanguageModel
 Implements a buffer of activations
 """
 
+class EmptyStream(Exception):
+    """
+    An exception for when the data stream has been exhausted
+    """
+    def __init__(self):
+        super().__init__()
+
 class ActivationBuffer:
     def __init__(self, 
-                 data, # path to a .zstd file
+                 data, # generator which yields text data
                  model, # LanguageModel from which to extract activations
                  submodule, # submodule of the model from which to extract activations
                  n_ctxs=5e5, # approximate number of contexts to store in the buffer
@@ -23,12 +30,7 @@ class ActivationBuffer:
         self.activations = t.empty(0, submodule.out_features)
         self.read = t.empty(0, submodule.out_features).bool() # has the activation been read?
 
-        # load the datastream
-        compressed_file = open(data, 'rb')
-        dctx = zstd.ZstdDecompressor()
-        reader = dctx.stream_reader(compressed_file)
-        self.text_stream = io.TextIOWrapper(reader, encoding='utf-8')
-        
+        self.data = data
         self.model = model # assumes model is already on device
         self.submodule = submodule
         self.n_ctxs = n_ctxs
@@ -37,19 +39,25 @@ class ActivationBuffer:
         self.out_batch_size = out_batch_size
         self.device=device
 
-    def get_batch(self):
+    def __iter__(self):
         """
-        Get a batch of activations
+        Return a batch of activations
         """
-        # if buffer is less than half full, refresh
-        if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
-            self.refresh()
-        
-        # otherwise, return a batch
-        unreads = (~self.read).nonzero().squeeze()
-        idxs = unreads[t.randperm(len(unreads))[:self.out_batch_size]]
-        self.read[idxs] = True
-        return self.activations[idxs]
+        exhausted = False # have we exhausted the data stream?
+        while not exhausted:
+            # if buffer is less than half full, refresh
+            if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
+                try:
+                    self.refresh()
+                except EmptyStream: # if the data stream is exhausted, stop
+                    exhausted = True
+                    break
+
+            # yield a batch
+            unreads = (~self.read).nonzero().squeeze()
+            idxs = unreads[t.randperm(len(unreads))[:self.out_batch_size]]
+            self.read[idxs] = True
+            yield self.activations[idxs]
     
     def refresh(self):
         """
@@ -65,8 +73,7 @@ class ActivationBuffer:
         while len(self.activations) < self.n_ctxs * self.ctx_len:
             if idx % self.in_batch_size == 0:
                 inputs = []
-            text = json.loads(next(self.text_stream))['text']
-            inputs.append(text)
+            inputs.append(next(self.data))
             if idx % self.in_batch_size == self.in_batch_size - 1:
                 aux = self.model.tokenizer(inputs, return_tensors='pt', max_length=128, padding=True, truncation=True).to(self.device)
                 tokens, attention_mask = aux['input_ids'], aux['attention_mask']
@@ -90,7 +97,7 @@ class ActivationBuffer:
         Get a batch of input texts 
         """
         inputs = [
-            json.loads(next(self.text_stream))['text']
+            next(self.data)
             for _ in range(4) # TODO change this back
         ]
         return inputs
