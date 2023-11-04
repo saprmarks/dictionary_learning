@@ -105,6 +105,42 @@ def reconstruction_loss(
         return (losses[1] - losses[2]) / (losses[0] - losses[2])
     else:
         return tuple(losses)
+    
+def resample_neurons(deads, activations, ae, optimizer):
+    """
+    resample dead neurons according to the following scheme:
+    Reinitialize the decoder vector for each dead neuron to be an activation
+    vector v from the dataset with probability proportional to ae's loss on v.
+    Reinitialize all dead encoder vectors to be the mean alive encoder vector x 0.2.
+    Reset the bias vectors for dead neurons to 0.
+    Reset the Adam parameters for the dead neurons to their default values.
+    """
+    with t.no_grad():
+        acts = activations.reshape(-1, activations.shape[-1])
+
+        # compute the loss for each activation vector
+        losses = (acts - ae(acts)).norm(dim=-1)
+
+        # resample decoder vectors for dead neurons
+        indices = t.multinomial(losses, num_samples=deads.sum(), replacement=True)
+        ae.decoder.weight[:,deads] = acts[indices].T
+        ae.decoder.weight /= ae.decoder.weight.norm(dim=-1, keepdim=True)
+
+        # resample encoder vectors for dead neurons
+        ae.encoder.weight[deads] = ae.encoder.weight[~deads].mean(dim=0) * 0.2
+
+        # reset bias vectors for dead neurons
+        ae.encoder.bias[deads] = 0.
+
+        # reset Adam parameters for dead neurons
+        state_dict = optimizer.state_dict()['state']
+        # # encoder weight
+        state_dict[1]['exp_avg'][deads] = 0.
+        state_dict[1]['exp_avg_sq'][deads] = 0.
+        # # encoder bias
+        state_dict[2]['exp_avg'][deads] = 0.
+        state_dict[2]['exp_avg_sq'][deads] = 0.
+
 
 def trainSAE(
         activations,
@@ -114,17 +150,16 @@ def trainSAE(
         sparsity_penalty,
         entropy=False,
         steps=None,
+        resample_steps=1000,
         log_steps=100,
         device='cpu'):
     """
     Train a sparse autoencoder
     """
-    # initialize the dictionary
     ae = AutoEncoder(activation_dim, dictionary_size).to(device)
+    alives = t.zeros(dictionary_size).bool().to(device)
 
-    # train the dictionary
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
-    #optimizer = t.optim.Adam(ae.parameters(), lr=lr)
 
     for step, acts in enumerate(activations):
         if steps is not None and step >= steps:
@@ -134,6 +169,21 @@ def trainSAE(
         loss = sae_loss(acts, ae, sparsity_penalty, entropy, separate=False)
         loss.backward()
         optimizer.step()
+
+        # deal with resampling neuron business
+        if resample_steps is not None:
+            with t.no_grad():
+                dict_acts = ae.encode(acts)
+                alives = t.logical_or(alives, (dict_acts != 0).any(dim=0))
+                if step % resample_steps == resample_steps // 2:
+                    alives = t.zeros(dictionary_size).bool().to(device)
+                if step % resample_steps == resample_steps - 1:
+                    deads = ~alives
+                    if deads.sum() > 0:
+                        print(f"resampling {deads.sum().item()} dead neurons")
+                        resample_neurons(deads, acts, ae, optimizer)
+
+        # logging
         if log_steps is not None and step % log_steps == 0:
             with t.no_grad():
                 print(f"step {step} autoencoder loss: {loss.item()}")
