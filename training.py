@@ -2,10 +2,12 @@
 Training dictionaries
 """
 
+import os
 import torch as t
 from .dictionary import AutoEncoder
 from einops import einsum
 from .buffer import ActivationBuffer
+from tqdm import tqdm
 
 class ConstrainedAdam(t.optim.Adam):
     """
@@ -152,6 +154,7 @@ def trainSAE(
         steps=None,
         resample_steps=1000,
         log_steps=100,
+        save_steps=None,
         device='cpu'):
     """
     Train a sparse autoencoder
@@ -161,7 +164,7 @@ def trainSAE(
 
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
 
-    for step, acts in enumerate(activations):
+    for step, acts in tqdm(enumerate(activations), total=steps):
         if steps is not None and step >= steps:
             break
         acts = acts.to(device)
@@ -182,6 +185,8 @@ def trainSAE(
                     if deads.sum() > 0:
                         print(f"resampling {deads.sum().item()} dead neurons")
                         resample_neurons(deads, acts, ae, optimizer)
+                    else:
+                        print("no dead neurons to resample")
 
         # logging
         if log_steps is not None and step % log_steps == 0:
@@ -193,6 +198,10 @@ def trainSAE(
                     tokens = activations.tokenized_batch().input_ids
                     loss_orig, loss_reconst, loss_zero = reconstruction_loss(tokens, activations.model, activations.submodule, ae)
                     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
+        
+        if save_steps is not None and step % save_steps == 0:
+            if not os.path.exists(f"autoencoders/step{step}"):
+                os.mkdir(f"autoencoders/step{step}/")
+            t.save(ae, f"autoencoders/step{step}/ae_c4_lr{lr}_resample{resample_steps}_dict2048.pt")
 
     return ae
-
