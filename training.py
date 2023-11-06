@@ -153,8 +153,7 @@ def trainSAE(
         entropy=False,
         steps=None,
         resample_steps=1000,
-        log_steps=100,
-        save_steps=None,
+        log_steps=1000,
         device='cpu'):
     """
     Train a sparse autoencoder
@@ -164,7 +163,7 @@ def trainSAE(
 
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
 
-    for step, acts in tqdm(enumerate(activations), total=steps):
+    for step, acts in enumerate(tqdm(activations, total=steps)):
         if steps is not None and step >= steps:
             break
         acts = acts.to(device)
