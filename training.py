@@ -154,6 +154,7 @@ def trainSAE(
         steps=None,
         resample_steps=1000,
         log_steps=1000,
+        save_steps=None,
         device='cpu'):
     """
     Train a sparse autoencoder
