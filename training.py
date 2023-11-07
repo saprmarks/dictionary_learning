@@ -7,6 +7,7 @@ from .dictionary import AutoEncoder
 from einops import einsum
 from .buffer import ActivationBuffer
 import os
+from tqdm import tqdm
 
 class ConstrainedAdam(t.optim.Adam):
     """
@@ -152,7 +153,7 @@ def trainSAE(
         warmup_steps=1000,
         resample_steps=25000,
         save_steps=None,
-        save_dir=None,
+        save_dir="autoencoders/",
         log_steps=1000,
         device='cpu'):
     """
@@ -170,7 +171,7 @@ def trainSAE(
             return 1.
     scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
 
-    for step, acts in enumerate(activations):
+    for step, acts in enumerate(tqdm(activations, total=steps)):
         if steps is not None and step >= steps:
             break
         acts = acts.to(device)
@@ -213,4 +214,3 @@ def trainSAE(
             t.save(ae, os.path.join(save_dir, f"step{step}", f"ae_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt"))
 
     return ae
-
