@@ -60,7 +60,7 @@ class ActivationBuffer:
             self.read[idxs] = True
             return self.activations[idxs]
     
-    def text_batch(self):
+    def text_batch(self, batch_size=32):
         """
         Return a list of text
         """
@@ -69,11 +69,11 @@ class ActivationBuffer:
         ]
     
     
-    def tokenized_batch(self):
+    def tokenized_batch(self, batch_size=32):
         """
         Return a batch of tokenized inputs.
         """
-        texts = self.text_batch()
+        texts = self.text_batch(batch_size=batch_size)
         return self.model.tokenizer(
             texts,
             return_tensors='pt',
@@ -93,17 +93,17 @@ class ActivationBuffer:
 
         # read in new activations until buffer is full
         while len(self.activations) < self.n_ctxs * self.ctx_len:
-            inputs = self.tokenized_batch()
+            tokens = self.tokenized_batch()['input_ids']
             with self.model.generate(max_new_tokens=1, pad_token_id=self.model.tokenizer.pad_token_id) as generator:
-                with generator.invoke(inputs['input_ids'], scan=False) as invoker:
+                with generator.invoke(tokens, scan=False) as invoker:
                     hidden_states = self.submodule.output.save()
             # TODO once nnsight memory issue is fixed change to below:
             # with self.model.forward(inputs, scan=False) as invoker:
             #     hidden_states = self.submodule.output.save()
-            attn_mask = invoker.input['attention_mask']
-            tokens, attn_mask = inputs['input_ids'], inputs['attention_mask']
+            
             self.activations = t.cat(
-                [self.activations, hidden_states.value[attn_mask == 1].to('cpu')], # activations over non-padding tokens
+                [self.activations, 
+                 hidden_states.value[tokens != self.model.tokenizer.pad_token_id].to('cpu')], # activations over non-padding tokens
                 dim=0
             )
         
