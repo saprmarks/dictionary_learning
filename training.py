@@ -152,6 +152,7 @@ def trainSAE(
         warmup_steps=1000,
         resample_steps=25000,
         save_steps=None,
+        save_dir=None,
         log_steps=1000,
         device='cpu'):
     """
@@ -207,9 +208,9 @@ def trainSAE(
 
         # saving
         if save_steps is not None and step % save_steps == 0:
-            if not os.path.exists(f"autoencoders/step{step}"):
-                os.mkdir(f"autoencoders/step{step}/")
-            t.save(ae, f"autoencoders/step{step}/ae_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt")
+            if not os.path.exists(os.path.join(save_dir, f"step{step}")):
+                os.mkdir(os.path.join(save_dir, f"step{step}"))
+            t.save(ae, os.path.join(save_dir, f"step{step}", f"ae_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt"))
 
     return ae
 
