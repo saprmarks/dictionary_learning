@@ -69,7 +69,6 @@ class ActivationBuffer:
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
         self.is_hf = is_hf
-        self.device=device
     
     def __iter__(self):
         return self
