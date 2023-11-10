@@ -52,15 +52,19 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
     """
     Compute the loss of an autoencoder on some activations
     """
-    f = ae.encode(activations)
+    if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
+        in_acts, out_acts = activations
+    else:
+        in_acts = out_acts = activations
+    f = ae.encode(in_acts)
     x_hat = ae.decode(f)
     mse_loss = t.nn.MSELoss()(
-        activations, x_hat
+        out_acts, x_hat
     )
-    # if use_entropy:
-    #     sparsity_loss = entropy(f)
-    # else:
-    sparsity_loss = f.norm(p=1, dim=-1).mean()
+    if use_entropy:
+        sparsity_loss = entropy(f)
+    else:
+        sparsity_loss = f.norm(p=1, dim=-1).mean()
     if separate:
         return mse_loss, sparsity_loss
     else:
@@ -115,14 +119,19 @@ def resample_neurons(deads, activations, ae, optimizer):
     Reset the Adam parameters for the dead neurons to their default values.
     """
     with t.no_grad():
-        acts = activations.reshape(-1, activations.shape[-1])
+        if isinstance(activations, tuple):
+            in_acts, out_acts = activations
+        else:
+            in_acts = out_acts = activations
+        in_acts = in_acts.reshape(-1, in_acts.shape[-1])
+        out_acts = out_acts.reshape(-1, out_acts.shape[-1])
 
         # compute the loss for each activation vector
-        losses = (acts - ae(acts)).norm(dim=-1)
+        losses = (out_acts - ae(in_acts)).norm(dim=-1)
 
         # resample decoder vectors for dead neurons
         indices = t.multinomial(losses, num_samples=deads.sum(), replacement=True)
-        ae.decoder.weight[:,deads] = acts[indices].T
+        ae.decoder.weight[:,deads] = out_acts[indices].T
         ae.decoder.weight /= ae.decoder.weight.norm(dim=0, keepdim=True)
 
         # resample encoder vectors for dead neurons
@@ -173,7 +182,12 @@ def trainSAE(
     for step, acts in enumerate(activations):
         if steps is not None and step >= steps:
             break
-        acts = acts.to(device)
+
+        if isinstance(acts, t.Tensor):
+            acts = acts.to(device)
+        elif isinstance(acts, tuple):
+            acts = tuple(a.to(device) for a in acts)
+
         optimizer.zero_grad()
         loss = sae_loss(acts, ae, sparsity_penalty, entropy, separate=False)
         loss.backward()
@@ -183,7 +197,11 @@ def trainSAE(
         # deal with resampling neuron business
         if resample_steps is not None:
             with t.no_grad():
-                dict_acts = ae.encode(acts)
+                if isinstance(acts, tuple):
+                    in_acts = acts[0]
+                else:
+                    in_acts = acts
+                dict_acts = ae.encode(in_acts)
                 alives = t.logical_or(alives, (dict_acts != 0).any(dim=0))
                 if step % resample_steps == resample_steps // 2:
                     alives = t.zeros(dictionary_size).bool().to(device)
@@ -195,12 +213,11 @@ def trainSAE(
 
         # logging
         if log_steps is not None and step % log_steps == 0:
-            t.save(ae.state_dict(), f"autoencoders/ae_lr{lr}_sp{sparsity_penalty}_{step}.pt")
             with t.no_grad():
                 mse_loss, sparsity_loss = sae_loss(acts, ae, sparsity_penalty, entropy, separate=True)
                 print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
-                dict_acts = ae.encode(acts)
-                print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
+                # dict_acts = ae.encode(acts)
+                # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
                 # if isinstance(activations, ActivationBuffer):
                 #     tokens = activations.tokenized_batch().input_ids
                 #     loss_orig, loss_reconst, loss_zero = reconstruction_loss(tokens, activations.model, activations.submodule, ae)
@@ -210,7 +227,9 @@ def trainSAE(
         if save_steps is not None and step % save_steps == 0:
             if not os.path.exists(os.path.join(save_dir, f"step{step}")):
                 os.mkdir(os.path.join(save_dir, f"step{step}"))
-            t.save(ae, os.path.join(save_dir, f"step{step}", f"ae_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt"))
+            t.save(
+                ae.state_dict(), 
+                os.path.join(save_dir, f"step{step}", f"ae_ent_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt")
+                )
 
     return ae
-
