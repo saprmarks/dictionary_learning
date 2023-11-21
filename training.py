@@ -4,7 +4,6 @@ Training dictionaries
 
 import torch as t
 from .dictionary import AutoEncoder
-from einops import einsum
 from .buffer import ActivationBuffer
 import os
 from tqdm import tqdm
@@ -162,7 +161,7 @@ def trainSAE(
         warmup_steps=1000,
         resample_steps=25000,
         save_steps=None,
-        save_dir="autoencoders/",
+        save_dir=None,
         log_steps=1000,
         device='cpu'):
     """
@@ -225,12 +224,12 @@ def trainSAE(
                 #     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
 
         # saving
-        if save_steps is not None and step % save_steps == 0:
-            if not os.path.exists(os.path.join(save_dir, f"step{step}")):
-                os.mkdir(os.path.join(save_dir, f"step{step}"))
+        if save_steps is not None and save_dir is not None and step % save_steps == 0:
+            if not os.path.exists(os.path.join(save_dir, "checkpoints")):
+                os.mkdir(os.path.join(save_dir, "checkpoints"))
             t.save(
                 ae.state_dict(), 
-                os.path.join(save_dir, f"step{step}", f"ae_ent_lr{lr}_sp{sparsity_penalty}_sz{dictionary_size}.pt")
+                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt")
                 )
 
     return ae
