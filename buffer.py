@@ -23,11 +23,10 @@ class ActivationBuffer:
                  in_feats=None,
                  out_feats=None, 
                  io='out', # can be 'in', 'out', or 'in_to_out'
-                 n_ctxs=5e5, # approximate number of contexts to store in the buffer
+                 n_ctxs=3e4, # approximate number of contexts to store in the buffer
                  ctx_len=128, # length of each context
-                 in_batch_size=32, # size of batches in which to process the data when adding to buffer
-                 out_batch_size=4096, # size of batches in which to return activations
-                 is_hf=False,
+                 in_batch_size=512, # size of batches in which to process the data when adding to buffer
+                 out_batch_size=8192, # size of batches in which to return activations
                  ):
         
         if io == 'in':
@@ -68,7 +67,6 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
-        self.is_hf = is_hf
     
     def __iter__(self):
         return self
@@ -94,21 +92,18 @@ class ActivationBuffer:
             else:
                 return (self.activations_in[idxs], self.activations_out[idxs])
     
-    def text_batch(self, batch_size=32):
+    def text_batch(self, batch_size=None):
         """
         Return a list of text
         """
-        if self.is_hf:
-            return [
-                next(self.data)["text"] for _ in range(self.in_batch_size)
-            ]
-        else:
-            return [
-                next(self.data) for _ in range(self.in_batch_size)
-            ]
+        if batch_size is None:
+            batch_size = self.in_batch_size
+        return [
+            next(self.data) for _ in range(batch_size)
+        ]
     
     
-    def tokenized_batch(self, batch_size=32):
+    def tokenized_batch(self, batch_size=None):
         """
         Return a batch of tokenized inputs.
         """

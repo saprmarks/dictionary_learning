@@ -25,42 +25,36 @@ class ConstrainedAdam(t.optim.Adam):
         super().step(closure=closure)
         with t.no_grad():
             for p in self.constrained_params:
+                # renormalize the constrained parameters
                 p /= p.norm(dim=0, keepdim=True)
 
-def entropy(p):
-    eps = 1e-8
-    # Calculate the sum along the last dimension (i.e., sum of each vector in the batch)
+def entropy(p, eps=1e-8):
     p_sum = p.sum(dim=-1, keepdim=True)
-    
-    # Avoid in-place operations that can interfere with autograd
-    p_normed = p / (p_sum + eps)  # Add eps to prevent division by zero
-    
-    # Compute the log safely, adding eps inside the log to prevent log(0)
-    p_log = t.log(p_normed + eps)  # Add eps to prevent log(0)
-
-    # Compute the entropy, this will give zero for elements where p_normed is zero
+    # epsilons for numerical stability    
+    p_normed = p / (p_sum + eps)    
+    p_log = t.log(p_normed + eps)
     ent = -(p_normed * p_log)
     
-    # Zero out the entropy where the sum of p is zero (i.e., for all-zero vectors)
+    # Zero out the entropy where p_sum is zero
     ent = t.where(p_sum > 0, ent, t.zeros_like(ent))
 
-    # Sum the entropy across the features and then take the mean across the batch
     return ent.sum(dim=-1).mean()
 
 
 def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=False):
     """
     Compute the loss of an autoencoder on some activations
+    If separate is True, return the MSE loss and the sparsity loss separately
     """
     if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
         in_acts, out_acts = activations
-    else:
+    else: # typically the input to the autoencoder is the same as the output
         in_acts = out_acts = activations
     f = ae.encode(in_acts)
     x_hat = ae.decode(f)
     mse_loss = t.nn.MSELoss()(
         out_acts, x_hat
-    )
+    ).sqrt()
     if use_entropy:
         sparsity_loss = entropy(f)
     else:
@@ -69,45 +63,6 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
         return mse_loss, sparsity_loss
     else:
         return mse_loss + sparsity_penalty * sparsity_loss
-    
-def reconstruction_loss(
-        tokens, # a tokenized batch
-        model,
-        submodule,
-        ae, # an AutoEncoder
-        pct=False # return pct recovered; if False, return losses
-):
-    """
-    Compute the reconstruction loss of model on a batch of data
-    This is the model's loss if the component output is replaced with the reconstruction by the autoencoder.
-    """
-    
-    # unmodified logits
-    with model.forward(tokens):
-        logits_original = model.embed_out.output.save()
-    
-    # logits when replacing component output with reconstruction by autoencoder
-    with model.forward(tokens):
-        submodule.output = ae(submodule.output)
-        logits_reconstructed = model.embed_out.output.save()
-    
-    # logits when zero ablating component
-    with model.forward(tokens):
-        submodule.output = t.zeros_like(submodule.output)
-        logits_zero = model.embed_out.output.save()
-    
-    losses = []
-    for logits in [logits_original, logits_reconstructed, logits_zero]:
-        loss = t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)(
-            logits.value[:,:-1,:].reshape(-1, logits.value.shape[-1]),
-            tokens[:,1:].reshape(-1)
-        ).item()
-        losses.append(loss)
-    
-    if pct:
-        return (losses[1] - losses[2]) / (losses[0] - losses[2])
-    else:
-        return tuple(losses)
     
 def resample_neurons(deads, activations, ae, optimizer):
     """
@@ -151,24 +106,24 @@ def resample_neurons(deads, activations, ae, optimizer):
 
 
 def trainSAE(
-        activations,
-        activation_dim, 
-        dictionary_size,
-        lr, 
+        activations, # a generator that outputs batches of activations
+        activation_dim, # dimension of the activations
+        dictionary_size, # size of the dictionary
+        lr,
         sparsity_penalty,
         entropy=False,
-        steps=None,
-        warmup_steps=1000,
-        resample_steps=25000,
-        save_steps=None,
-        save_dir=None,
-        log_steps=1000,
+        steps=None, # if None, train until activations are exhausted
+        warmup_steps=1000, # linearly increase the learning rate for this many steps
+        resample_steps=25000, # how often to resample dead neurons
+        save_steps=None, # how often to save checkpoints
+        save_dir=None, # directory for saving checkpoints
+        log_steps=1000, # how often to print statistics
         device='cpu'):
     """
-    Train a sparse autoencoder
+    Train and return a sparse autoencoder
     """
     ae = AutoEncoder(activation_dim, dictionary_size).to(device)
-    alives = t.zeros(dictionary_size).bool().to(device)
+    alives = t.zeros(dictionary_size).bool().to(device) # which neurons are not dead?
 
     # set up optimizer and scheduler
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
@@ -183,9 +138,9 @@ def trainSAE(
         if steps is not None and step >= steps:
             break
 
-        if isinstance(acts, t.Tensor):
+        if isinstance(acts, t.Tensor): # typical casse
             acts = acts.to(device)
-        elif isinstance(acts, tuple):
+        elif isinstance(acts, tuple): # for cases where the autoencoder input and output are different
             acts = tuple(a.to(device) for a in acts)
 
         optimizer.zero_grad()
@@ -194,7 +149,7 @@ def trainSAE(
         optimizer.step()
         scheduler.step()
 
-        # deal with resampling neuron business
+        # deal with resampling neurons
         if resample_steps is not None:
             with t.no_grad():
                 if isinstance(acts, tuple):
