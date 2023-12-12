@@ -6,28 +6,6 @@ import torch as t
 from .training import sae_loss
 import matplotlib.pyplot as plt
 
-def cossim(a, b):
-    """
-    Compute the pairwise cosine similarities between the rows of a and b.
-    """
-    a = a / a.norm(dim=-1, keepdim=True)
-    b = b / b.norm(dim=-1, keepdim=True)
-    return t.mm(a, b.T)
-
-def meanmax(m, max_dim=-1):
-    return m.max(dim=max_dim).values.mean()
-
-def mmcs(d1, d2, encoder=True):
-    """
-    Given two dictionaries d1, d2, compute the mean (over features in d1)
-    maximum cossine similarity with a feature in d2.
-    If encoder is True, then use encoder weights, else use decoder weights.
-    """
-    if encoder:
-        return meanmax(cossim(d1.encoder.weight, d2.encoder.weight))
-    else:
-        return meanmax(cossim(d1.decoder.weight.T, d2.decoder.weight.T))
-
 def loss_recovered(
         tokens, # a tokenized batch
         model, # an nnsight LanguageModel
