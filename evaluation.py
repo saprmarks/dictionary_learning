@@ -6,6 +6,28 @@ import torch as t
 from .training import sae_loss
 import matplotlib.pyplot as plt
 
+def cossim(a, b):
+    """
+    Compute the pairwise cosine similarities between the rows of a and b.
+    """
+    a = a / a.norm(dim=-1, keepdim=True)
+    b = b / b.norm(dim=-1, keepdim=True)
+    return t.mm(a, b.T)
+
+def meanmax(m, max_dim=-1):
+    return m.max(dim=max_dim).values.mean()
+
+def mmcs(d1, d2, encoder=True):
+    """
+    Given two dictionaries d1, d2, compute the mean (over features in d1)
+    maximum cossine similarity with a feature in d2.
+    If encoder is True, then use encoder weights, else use decoder weights.
+    """
+    if encoder:
+        return meanmax(cossim(d1.encoder.weight, d2.encoder.weight))
+    else:
+        return meanmax(cossim(d1.decoder.weight.T, d2.decoder.weight.T))
+
 def loss_recovered(
         tokens, # a tokenized batch
         model, # an nnsight LanguageModel
@@ -27,11 +49,11 @@ def loss_recovered(
     # logits when replacing component output with reconstruction by autoencoder
     with model.invoke(tokens) as invoker:
         if io == 'in':
-            submodule.input = dictionary(submodule.input)
+            submodule.input = dictionary.forward(submodule.input)
         elif io == 'out':
-            submodule.output = dictionary(submodule.output)
+            submodule.output = dictionary.forward(submodule.output)
         elif io == 'in_to_out':
-            submodule.output = dictionary(submodule.input)
+            submodule.output = dictionary.forward(submodule.input)
         else:
             raise ValueError(f"invalid io: {io}")
         
@@ -67,6 +89,7 @@ def evaluate(
         activations, # an ActivationBuffer
         entropy=False, # whether to use entropy regularization
         hist_save_path=None, # path for saving histograms
+        hist_title=None, # title for histograms
         io='out', # can be 'in', 'out', or 'in_to_out'
         device='cpu'
 ):
@@ -94,6 +117,7 @@ def evaluate(
             plt.figure()
             plt.hist(freqs.cpu(), bins=t.logspace(-5, 0, 100))
             plt.xscale('log')
+            plt.title(hist_title)
             plt.savefig(hist_save_path)
             plt.close()
         
@@ -107,3 +131,5 @@ def evaluate(
         out['percent_recovered'] = (loss_reconstructed - loss_zero) / (loss_original - loss_zero)
 
         return out
+
+# %%
