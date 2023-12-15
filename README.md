@@ -1,6 +1,6 @@
 This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller. 
 
-For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of December 2023, nnsight is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/tutorials/main_demo/).
+For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of December 2023, nnsight is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/notebooks/walkthrough/).
 
 Some dictionaries trained using this repository (and asociated training checkpoints) can be accessed at [https://baulab.us/u/smarks/autoencoders/](https://baulab.us/u/smarks/autoencoders/). See below for more information about these dictionaries.
 
@@ -95,7 +95,7 @@ If you are working with a model/model component where the activations are tuples
 
 To download our open-source dictionaries and associated training checkpoints, navigate to the directory you would like to save the dictionaries in, and then:
 ```bash
-wget -r --noparent https://baulab.us/u/smarks/autoencoders/
+wget -r --no-parent https://baulab.us/u/smarks/autoencoders/
 ```
 
 Currently, we've made available two sets of dictionaries for EleutherAI's pythia-70m-deduped. Both were both trained on 512-dimensional MLP *output* activations (not the hidden layer), using ~800M tokens from [The Pile](https://pile.eleuther.ai/). 
