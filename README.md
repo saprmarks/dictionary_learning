@@ -8,7 +8,7 @@ Some dictionaries trained using this repository (and asociated training checkpoi
 
 Navigate to the to the location where you would like to clone this repo, clone and enter the repo, and install the requirements.
 ```bash
-git clone git@github.com:saprmarks/dictionary_learning.git
+git clone https://github.com/saprmarks/dictionary_learning
 cd dictionary_learning
 pip install -r requirements.txt
 ```
