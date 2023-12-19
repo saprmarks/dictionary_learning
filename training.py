@@ -54,7 +54,7 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
     x_hat = ae.decode(f)
     mse_loss = t.nn.MSELoss()(
         out_acts, x_hat
-    )
+    ).sqrt()
     if use_entropy:
         sparsity_loss = entropy(f)
     else:

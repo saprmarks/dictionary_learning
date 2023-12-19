@@ -99,8 +99,8 @@ wget -r --noparent https://baulab.us/u/smarks/autoencoders/
 ```
 
 Currently, we've made available two sets of dictionaries for EleutherAI's pythia-70m-deduped. Both were both trained on 512-dimensional MLP *output* activations (not the hidden layer), using ~800M tokens from [The Pile](https://pile.eleuther.ai/). 
-* The first set, called `0_8192`, consists of dictionaries of size 8192 = 16 * 512. These were trained with an l1 penalty of `1e-3`. 
-* The second set, called `1_32768`, consists of dictionaries of size 32768 = 64 * 512. These were trained with an l1 penalty of `3e-3`.
+* The first set, called `0_8192`, consists of dictionaries of size $8192 = 16 \times 512$. These were trained with an l1 penalty of `1e-3`. 
+* The second set, called `1_32768`, consists of dictionaries of size $32768 = 64 \times 512$. These were trained with an l1 penalty of `3e-3`.
 
 Let's explain the directory structure by example. The `autoencoders/pythia-70m-deduped/mlp_out_layer1/0_8192` directory corresponds to the layer 1 MLP dictionary from the first set. This directory contains:
 * `ae.pt`: the `state_dict` of the fully trained dictionary
