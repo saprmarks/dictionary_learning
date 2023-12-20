@@ -45,3 +45,50 @@ def random_feature(model, submodule, autoencoder, buffer,
     ]
 
     return (feat_idx, tokens, activations)
+
+def feature_effect(
+        model,
+        submodule,
+        dictionary,
+        feature,
+        input_tokens,
+        add_residual=False, # whether to compensate for dictionary reconstruction error by adding residual
+        k=10,
+):
+    """
+    Effect of ablating the feature on top k predictions for next token.
+    """
+    # clean run
+    with model.invoke(input_tokens) as invoker:
+        if not add_residual: # run hidden state through autoencoder
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][:] = dictionary(submodule.output[0])
+            else:
+                submodule.output = dictionary(submodule.output)
+    clean_probs = invoker.output.logits[0, -1, :].softmax(dim=-1)
+
+    # ablated run
+    with model.invoke(input_tokens) as invoker:
+        if type(submodule.output.shape) == tuple:
+            x = submodule.output[0]
+        else:
+            x = submodule.output
+
+        f = dictionary.encode(x)   
+        f[0, -1, feature] = 0
+        if not add_residual:
+            x = dictionary.decode(f)
+        else:
+            residual = dictionary(x) - x
+            x = dictionary.decode(f) - residual
+        
+        if type(submodule.output.shape) == tuple:
+            submodule.output[0][:] = x
+        else:
+            submodule.output = x
+    
+    ablated_probs = invoker.output.logits[0, -1, :].softmax(dim=-1)
+    diff = clean_probs - ablated_probs
+
+    top_probs, top_tokens = diff.topk(k)
+    return top_tokens, top_probs
