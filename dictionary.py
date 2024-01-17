@@ -38,14 +38,14 @@ class AutoEncoder(Dictionary, nn.Module):
         self.bias = nn.Parameter(t.zeros(activation_dim))
         self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
 
-        # rows of decoder weight matrix are need to be unit vectors
+        # rows of decoder weight matrix are unit vectors
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
         dec_weight = t.randn_like(self.decoder.weight)
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
 
     def encode(self, x):
-        return nn.ReLU()(self.encoder(x - self.bias))
+        return t.clamp_min(self.encoder(x - self.bias), 0.)
     
     def decode(self, f):
         return self.decoder(f) + self.bias

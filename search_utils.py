@@ -52,8 +52,9 @@ def feature_effect(
         dictionary,
         feature,
         input_tokens,
-        add_residual=False, # whether to compensate for dictionary reconstruction error by adding residual
+        add_residual=True, # whether to compensate for dictionary reconstruction error by adding residual
         k=10,
+        largest=True,
 ):
     """
     Effect of ablating the feature on top k predictions for next token.
@@ -65,7 +66,8 @@ def feature_effect(
                 submodule.output[0][:] = dictionary(submodule.output[0])
             else:
                 submodule.output = dictionary(submodule.output)
-    clean_probs = invoker.output.logits[0, -1, :].softmax(dim=-1)
+    clean_logits = invoker.output.logits[0, -1, :]
+    clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
     # ablated run
     with model.invoke(input_tokens) as invoker:
@@ -87,8 +89,9 @@ def feature_effect(
         else:
             submodule.output = x
     
-    ablated_probs = invoker.output.logits[0, -1, :].softmax(dim=-1)
-    diff = clean_probs - ablated_probs
+    ablated_logits = invoker.output.logits[0, -1, :]
+    ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
+    diff = clean_logprobs - ablated_logprobs
 
-    top_probs, top_tokens = diff.topk(k)
-    return top_tokens, top_probs
+    top_logprobs, top_tokens = t.topk(diff, k=k, largest=largest)
+    return top_tokens, top_logprobs
