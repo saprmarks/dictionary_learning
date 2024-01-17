@@ -45,7 +45,7 @@ class AutoEncoder(Dictionary, nn.Module):
         self.decoder.weight = nn.Parameter(dec_weight)
 
     def encode(self, x):
-        return t.clamp_min(self.encoder(x - self.bias), 0.)
+        return nn.ReLU()(self.encoder(x - self.bias))
     
     def decode(self, f):
         return self.decoder(f) + self.bias

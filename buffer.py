@@ -8,13 +8,6 @@ from nnsight import LanguageModel
 Implements a buffer of activations
 """
 
-class EmptyStream(Exception):
-    """
-    An exception for when the data stream has been exhausted
-    """
-    def __init__(self):
-        super().__init__()
-
 class ActivationBuffer:
     def __init__(self, 
                  data, # generator which yields text data
@@ -78,10 +71,7 @@ class ActivationBuffer:
         with t.no_grad():
             # if buffer is less than half full, refresh
             if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
-                try:
-                    self.refresh()
-                except EmptyStream: # if the data stream is exhausted, stop
-                    raise StopIteration
+                self.refresh()
 
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
@@ -98,10 +88,12 @@ class ActivationBuffer:
         """
         if batch_size is None:
             batch_size = self.in_batch_size
-        return [
-            next(self.data) for _ in range(batch_size)
-        ]
-    
+        try:
+            return [
+                next(self.data) for _ in range(batch_size)
+            ]
+        except StopIteration:
+            raise StopIteration("End of data stream reached")
     
     def tokenized_batch(self, batch_size=None):
         """
