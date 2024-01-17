@@ -27,6 +27,8 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  in_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to return activations
+                 is_hf=False,
+                 device="cpu"
                  ):
         
         if io == 'in':
@@ -43,7 +45,7 @@ class ActivationBuffer:
                     out_feats = submodule.out_features
                 except:
                     raise ValueError("out_feats cannot be inferred and must be specified directly")
-            self.activations = t.empty(0, out_feats)
+            self.activations = t.empty(0, out_feats).to(device)
         elif io == 'in_to_out':
             if in_feats is None:
                 try:
@@ -67,6 +69,8 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
+        self.is_hf = is_hf
+        self.device = device
     
     def __iter__(self):
         return self
@@ -98,6 +102,10 @@ class ActivationBuffer:
         """
         if batch_size is None:
             batch_size = self.in_batch_size
+        if self.is_hf:
+            return [
+                next(self.data)["text"] for _ in range(batch_size)
+            ]
         return [
             next(self.data) for _ in range(batch_size)
         ]
@@ -126,6 +134,7 @@ class ActivationBuffer:
                 
                 tokens = self.tokenized_batch()['input_ids']
     
+                # with self.model.generate(max_new_tokens=1, pad_token_id=self.model.tokenizer.pad_token_id) as generator:
                 with self.model.generate(max_new_tokens=1, pad_token_id=self.model.tokenizer.pad_token_id) as generator:
                     with generator.invoke(tokens) as invoker:
                         if self.io == 'in':
@@ -137,7 +146,7 @@ class ActivationBuffer:
                     hidden_states = hidden_states[0]
                 hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
     
-                self.activations = t.cat([self.activations, hidden_states.to('cpu')], dim=0)
+                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
                 self.read = t.zeros(len(self.activations)).bool()
     
     def _refresh_in_to_out(self):
@@ -161,23 +170,23 @@ class ActivationBuffer:
                     hidden_states = hidden_states[0]
                 hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
                 if i == 0:
-                    self.activations_in = t.cat([self.activations_in, hidden_states.to('cpu')], dim=0)
+                    self.activations_in = t.cat([self.activations_in, hidden_states.to(self.device)], dim=0)
                 else:
-                    self.activations_out = t.cat([self.activations_out, hidden_states.to('cpu')], dim=0)
+                    self.activations_out = t.cat([self.activations_out, hidden_states.to(self.device)], dim=0)
             self.read = t.zeros(len(self.activations_in)).bool()
 
     def refresh(self):
         """
         Refresh the buffer
         """
-        print("refreshing buffer...")
+        # print("refreshing buffer...")
 
         if self.io == 'in' or self.io == 'out':
             self._refresh_std()
         else:
             self._refresh_in_to_out()
 
-        print('buffer refreshed...')
+        # print('buffer refreshed...')
 
     def close(self):
         """
