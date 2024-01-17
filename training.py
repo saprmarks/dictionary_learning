@@ -128,7 +128,7 @@ def trainSAE(
     # set up optimizer and scheduler
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
     def warmup_fn(step):
-        if step < warmup_steps:
+        if step % resample_steps < warmup_steps:
             return step / warmup_steps
         else:
             return 1.
