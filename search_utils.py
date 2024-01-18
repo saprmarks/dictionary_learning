@@ -64,7 +64,9 @@ def feature_effect(
     """
     # clean run
     with model.invoke(input_tokens) as invoker:
-        if not add_residual: # run hidden state through autoencoder
+        if dictionary is None:
+            pass
+        elif not add_residual: # run hidden state through autoencoder
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:] = dictionary(submodule.output[0])
             else:
@@ -79,18 +81,24 @@ def feature_effect(
         else:
             x = submodule.output
 
-        f = dictionary.encode(x)   
-        f[0, -1, feature] = 0
-        if not add_residual:
-            x = dictionary.decode(f)
+        if dictionary is None:
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][0, -1, feature] = 0
+            else:
+                submodule.output[0, -1, feature] = 0
         else:
-            residual = dictionary(x) - x
-            x = dictionary.decode(f) - residual
-        
-        if type(submodule.output.shape) == tuple:
-            submodule.output[0][:] = x
-        else:
-            submodule.output = x
+            f = dictionary.encode(x)   
+            f[0, -1, feature] = 0
+            if not add_residual:
+                x = dictionary.decode(f)
+            else:
+                residual = dictionary(x) - x
+                x = dictionary.decode(f) - residual
+            
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][:] = x
+            else:
+                submodule.output = x
     
     ablated_logits = invoker.output.logits[0, -1, :]
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
@@ -174,12 +182,13 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
     top_contexts = text_neuron_activations(tokens, activations)
 
     # this isn't working as expected, for some reason
-    """"
     top_affected = []
-    for input in inputs["input_ids"]:
-        top_affected.append(feature_effect(model, submodule, dictionary, dim_idx, model.tokenizer.decode(input)))
-        print(top_affected[-1])
-    """
+    affected_tokens, prob_change = feature_effect(model, submodule, dictionary, dim_idx, inputs)
+    for idx, tok_idx in enumerate(affected_tokens):
+        token = model.tokenizer._convert_id_to_token(tok_idx)
+        prob = prob_change[idx].item()
+        top_affected.append((token, prob))
 
     return {"top_contexts": top_contexts,
-            "top_tokens": top_tokens}
+            "top_tokens": top_tokens,
+            "top_affected": top_affected}
