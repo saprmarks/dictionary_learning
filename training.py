@@ -129,7 +129,7 @@ def trainSAE(
     optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
     def warmup_fn(step):
         if step % resample_steps < warmup_steps:
-            return step / warmup_steps
+            return (step % resample_steps) / warmup_steps
         else:
             return 1.
     scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
