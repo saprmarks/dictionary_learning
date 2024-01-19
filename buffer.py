@@ -20,7 +20,6 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  in_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to return activations
-                 is_hf=True
                  ):
         
         if io == 'in':
@@ -61,7 +60,6 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
-        self.is_hf = is_hf
     
     def __iter__(self):
         return self
@@ -91,14 +89,9 @@ class ActivationBuffer:
         if batch_size is None:
             batch_size = self.in_batch_size
         try:
-            if self.is_hf:
-                return [
-                    next(self.data)["text"] for _ in range(batch_size)
-                ]
-            else:
-                return [
-                    next(self.data) for _ in range(batch_size)
-                ]
+            return [
+                next(self.data) for _ in range(batch_size)
+            ]
         except StopIteration:
             raise StopIteration("End of data stream reached")
     
