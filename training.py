@@ -41,19 +41,15 @@ def entropy(p, eps=1e-8):
     return ent.sum(dim=-1).mean()
 
 
-def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=False):
+def sae_loss(x, ae, sparsity_penalty, use_entropy=False, separate=False):
     """
     Compute the loss of an autoencoder on some activations
     If separate is True, return the MSE loss and the sparsity loss separately
     """
-    if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
-        in_acts, out_acts = activations
-    else: # typically the input to the autoencoder is the same as the output
-        in_acts = out_acts = activations
-    f = ae.encode(in_acts)
+    f = ae.encode(x)
     x_hat = ae.decode(f)
     mse_loss = t.nn.MSELoss()(
-        out_acts, x_hat
+        x, x_hat
     ).sqrt()
     if use_entropy:
         sparsity_loss = entropy(f)
@@ -106,9 +102,9 @@ def resample_neurons(deads, activations, ae, optimizer):
 
 
 def trainSAE(
-        activations, # a generator that outputs batches of activations
-        activation_dim, # dimension of the activations
-        dictionary_size, # size of the dictionary
+        buffer, # an ActivationBuffer
+        activation_dims, # dictionary of activation dimensions for each submodule (or a single int)
+        dictionary_sizes, # dictionary of dictionary sizes for each submodule (or a single int)
         lr,
         sparsity_penalty,
         entropy=False,
@@ -116,75 +112,85 @@ def trainSAE(
         warmup_steps=1000, # linearly increase the learning rate for this many steps
         resample_steps=25000, # how often to resample dead neurons
         save_steps=None, # how often to save checkpoints
-        save_dir=None, # directory for saving checkpoints
-        log_steps=1000, # how often to print statistics
+        save_dirs=None, # dictionary of directories to save checkpoints to
+        load_dirs=None, # if initializing from a pretrained dictionary, directories to load from
+        log_steps=None, # how often to print statistics
         device='cpu'):
     """
-    Train and return a sparse autoencoder
+    Train and return sparse autoencoders for each submodule in the buffer.
     """
-    ae = AutoEncoder(activation_dim, dictionary_size).to(device)
-    alives = t.zeros(dictionary_size).bool().to(device) # which neurons are not dead?
+    if isinstance(activation_dims, int):
+        activation_dims = {submodule: activation_dims for submodule in buffer.submodules}
+    if isinstance(dictionary_sizes, int):
+        dictionary_sizes = {submodule: dictionary_sizes for submodule in buffer.submodules}
+
+    aes = {}
+    alives = {}
+    for submodule in buffer.submodules:
+        ae = AutoEncoder(activation_dims[submodule], dictionary_sizes[submodule]).to(device)
+        if load_dirs is not None:
+            ae.load_state_dict(t.load(os.path.join(load_dirs[submodule])))
+        aes[submodule] = ae
+        alives[submodule] = t.zeros(dictionary_sizes[submodule]).bool().to(device) # which neurons are not dead?
 
     # set up optimizer and scheduler
-    optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
+    optimizers = {
+        submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr) for submodule, ae in aes.items()
+    }
     def warmup_fn(step):
         if step % resample_steps < warmup_steps:
             return (step % resample_steps) / warmup_steps
         else:
             return 1.
-    scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
+    schedulers = {
+        submodule: t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn) for submodule, optimizer in optimizers.items()
+    }
 
-    for step, acts in enumerate(tqdm(activations, total=steps)):
+    for step, acts in enumerate(tqdm(buffer, total=steps)):
         if steps is not None and step >= steps:
             break
 
-        if isinstance(acts, t.Tensor): # typical casse
-            acts = acts.to(device)
-        elif isinstance(acts, tuple): # for cases where the autoencoder input and output are different
-            acts = tuple(a.to(device) for a in acts)
+        for submodule, act in acts.items():
+            act = act.to(device)
+            ae, alive, optimizer, scheduler = aes[submodule], alives[submodule], optimizers[submodule], schedulers[submodule]
+            optimizer.zero_grad()
+            loss = sae_loss(act, ae, sparsity_penalty, entropy)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
 
-        optimizer.zero_grad()
-        loss = sae_loss(acts, ae, sparsity_penalty, entropy, separate=False)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+            # deal with resampling neurons
+            if resample_steps is not None:
+                with t.no_grad():
+                    f = ae.encode(act)
+                    alive = t.logical_or(alive, (f != 0).any(dim=0))
+                    if step % resample_steps == resample_steps // 2:
+                        alive = t.zeros(dictionary_sizes[submodule]).bool().to(device)
+                    if step % resample_steps == resample_steps - 1:
+                        dead = ~alive
+                        if dead.sum() > 0:
+                            print(f"resampling {dead.sum().item()} dead neurons")
+                            resample_neurons(dead, act, ae, optimizer)
 
-        # deal with resampling neurons
-        if resample_steps is not None:
-            with t.no_grad():
-                if isinstance(acts, tuple):
-                    in_acts = acts[0]
-                else:
-                    in_acts = acts
-                dict_acts = ae.encode(in_acts)
-                alives = t.logical_or(alives, (dict_acts != 0).any(dim=0))
-                if step % resample_steps == resample_steps // 2:
-                    alives = t.zeros(dictionary_size).bool().to(device)
-                if step % resample_steps == resample_steps - 1:
-                    deads = ~alives
-                    if deads.sum() > 0:
-                        print(f"resampling {deads.sum().item()} dead neurons")
-                        resample_neurons(deads, acts, ae, optimizer)
+            # logging
+            if log_steps is not None and step % log_steps == 0:
+                with t.no_grad():
+                    mse_loss, sparsity_loss = sae_loss(act, ae, sparsity_penalty, entropy, separate=True)
+                    print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
+                    # dict_acts = ae.encode(acts)
+                    # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
+                    # if isinstance(activations, ActivationBuffer):
+                    #     tokens = activations.tokenized_batch().input_ids
+                    #     loss_orig, loss_reconst, loss_zero = reconstruction_loss(tokens, activations.model, activations.submodule, ae)
+                    #     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
 
-        # logging
-        if log_steps is not None and step % log_steps == 0:
-            with t.no_grad():
-                mse_loss, sparsity_loss = sae_loss(acts, ae, sparsity_penalty, entropy, separate=True)
-                print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
-                # dict_acts = ae.encode(acts)
-                # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
-                # if isinstance(activations, ActivationBuffer):
-                #     tokens = activations.tokenized_batch().input_ids
-                #     loss_orig, loss_reconst, loss_zero = reconstruction_loss(tokens, activations.model, activations.submodule, ae)
-                #     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
+            # saving
+            if save_steps is not None and save_dirs is not None and step % save_steps == 0:
+                if not os.path.exists(os.path.join(save_dirs[submodule], "checkpoints")):
+                    os.mkdir(os.path.join(save_dirs[submodule], "checkpoints"))
+                t.save(
+                    ae.state_dict(), 
+                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{step}.pt")
+                    )
 
-        # saving
-        if save_steps is not None and save_dir is not None and step % save_steps == 0:
-            if not os.path.exists(os.path.join(save_dir, "checkpoints")):
-                os.mkdir(os.path.join(save_dir, "checkpoints"))
-            t.save(
-                ae.state_dict(), 
-                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt")
-                )
-
-    return ae
+    return aes
