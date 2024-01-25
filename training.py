@@ -113,6 +113,7 @@ def trainSAE(
         resample_steps=25000, # how often to resample dead neurons
         save_steps=None, # how often to save checkpoints
         save_dirs=None, # dictionary of directories to save checkpoints to
+        checkpoint_offset=0, # if resuming training, the step number of the last checkpoint
         load_dirs=None, # if initializing from a pretrained dictionary, directories to load from
         log_steps=None, # how often to print statistics
         device='cpu'):
@@ -131,7 +132,7 @@ def trainSAE(
         if load_dirs is not None:
             ae.load_state_dict(t.load(os.path.join(load_dirs[submodule])))
         aes[submodule] = ae
-        alives[submodule] = t.zeros(dictionary_sizes[submodule]).bool().to(device) # which neurons are not dead?
+        alives[submodule] = t.zeros(dictionary_sizes[submodule], dtype=t.bool, device=device)
 
     # set up optimizer and scheduler
     optimizers = {
@@ -162,10 +163,11 @@ def trainSAE(
             # deal with resampling neurons
             if resample_steps is not None:
                 with t.no_grad():
-                    f = ae.encode(act)
-                    alive = t.logical_or(alive, (f != 0).any(dim=0))
+                    if step % resample_steps > resample_steps // 2:
+                        f = ae.encode(act)
+                        alive = t.logical_or(alive, (f != 0).any(dim=0))
                     if step % resample_steps == resample_steps // 2:
-                        alive = t.zeros(dictionary_sizes[submodule]).bool().to(device)
+                        alive = t.zeros(dictionary_sizes[submodule], dtype=t.bool, device=device)
                     if step % resample_steps == resample_steps - 1:
                         dead = ~alive
                         if dead.sum() > 0:
@@ -190,7 +192,7 @@ def trainSAE(
                     os.mkdir(os.path.join(save_dirs[submodule], "checkpoints"))
                 t.save(
                     ae.state_dict(), 
-                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{step}.pt")
+                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{step + checkpoint_offset}.pt")
                     )
 
     return aes
