@@ -20,6 +20,7 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  in_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to return activations
+                 device='cpu' # device on which to store the activations
                  ):
         
         # dictionary of activations
@@ -31,7 +32,7 @@ class ActivationBuffer:
                         in_feats = submodule.in_features
                     except:
                         raise ValueError("in_feats cannot be inferred and must be specified directly")
-                self.activations[submodule] = t.empty(0, in_feats)
+                self.activations[submodule] = t.empty(0, in_feats, device=device)
 
             elif io == 'out':
                 if out_feats is None:
@@ -39,10 +40,10 @@ class ActivationBuffer:
                         out_feats = submodule.out_features
                     except:
                         raise ValueError("out_feats cannot be inferred and must be specified directly")
-                self.activations[submodule] = t.empty(0, out_feats)
+                self.activations[submodule] = t.empty(0, out_feats, device=device)
             elif io == 'in_to_out':
                 raise ValueError("Support for in_to_out is depricated")
-        self.read = t.zeros(0).bool()
+        self.read = t.zeros(0, dtype=t.bool, device=device)
         self._n_activations = 0 # for tracking how many activations (read or unread) are currently in the buffer
 
         self.data = data
@@ -53,6 +54,7 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
+        self.device = device
     
     def __iter__(self):
         return self
@@ -67,7 +69,7 @@ class ActivationBuffer:
 
         # return a batch
         unreads = (~self.read).nonzero().squeeze()
-        idxs = unreads[t.randperm(len(unreads))[:self.out_batch_size]]
+        idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
         self.read[idxs] = True
         return {
             submodule : activations[idxs] for submodule, activations in self.activations.items()
@@ -124,12 +126,12 @@ class ActivationBuffer:
                 for submodule, activations in self.activations.items():
                     self.activations[submodule] = t.cat((
                         activations,
-                        hidden_states[submodule].value[attn_mask != 0].to('cpu')),
+                        hidden_states[submodule].value[attn_mask != 0].to(activations.device)),
                         dim=0
                     )
                     assert len(self.activations[submodule]) == self._n_activations
 
-        self.read = t.zeros(self._n_activations).bool()
+        self.read = t.zeros(self._n_activations, dtype=t.bool, device=self.device)
 
     def close(self):
         """
