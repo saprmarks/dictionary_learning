@@ -139,16 +139,20 @@ def trainSAE(
         submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr) for submodule, ae in aes.items()
     }
     def warmup_fn(step):
-        if step % resample_steps < warmup_steps:
-            return (step % resample_steps) / warmup_steps
-        else:
-            return 1.
+        real_step = step + checkpoint_offset
+        return min([
+            step / warmup_steps, # at the start of training
+            (real_step % resample_steps) / warmup_steps, # after resampling neurons
+            1 # otherwise
+        ])
+
     schedulers = {
         submodule: t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn) for submodule, optimizer in optimizers.items()
     }
 
     for step, acts in enumerate(tqdm(buffer, total=steps)):
-        if steps is not None and step >= steps:
+        real_step = step + checkpoint_offset
+        if steps is not None and real_step >= steps:
             break
 
         for submodule, act in acts.items():
@@ -163,22 +167,22 @@ def trainSAE(
             # deal with resampling neurons
             if resample_steps is not None:
                 with t.no_grad():
-                    if step % resample_steps > resample_steps // 2:
+                    if real_step % resample_steps > resample_steps // 2:
                         f = ae.encode(act)
                         alive = t.logical_or(alive, (f != 0).any(dim=0))
-                    if step % resample_steps == resample_steps // 2:
+                    if real_step % resample_steps == resample_steps // 2:
                         alive = t.zeros(dictionary_sizes[submodule], dtype=t.bool, device=device)
-                    if step % resample_steps == resample_steps - 1:
+                    if real_step % resample_steps == resample_steps - 1:
                         dead = ~alive
                         if dead.sum() > 0:
                             print(f"resampling {dead.sum().item()} dead neurons")
                             resample_neurons(dead, act, ae, optimizer)
 
             # logging
-            if log_steps is not None and step % log_steps == 0:
+            if log_steps is not None and real_step % log_steps == 0:
                 with t.no_grad():
                     mse_loss, sparsity_loss = sae_loss(act, ae, sparsity_penalty, entropy, separate=True)
-                    print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
+                    print(f"step {real_step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
                     # dict_acts = ae.encode(acts)
                     # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
                     # if isinstance(activations, ActivationBuffer):
@@ -187,12 +191,12 @@ def trainSAE(
                     #     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
 
             # saving
-            if save_steps is not None and save_dirs is not None and step % save_steps == 0:
+            if save_steps is not None and save_dirs is not None and real_step % save_steps == 0:
                 if not os.path.exists(os.path.join(save_dirs[submodule], "checkpoints")):
                     os.mkdir(os.path.join(save_dirs[submodule], "checkpoints"))
                 t.save(
                     ae.state_dict(), 
-                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{step + checkpoint_offset}.pt")
+                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{real_step}.pt")
                     )
 
     return aes

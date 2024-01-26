@@ -103,7 +103,7 @@ class ActivationBuffer:
 
     def refresh(self):
         for submodule, activations in self.activations.items():
-            self.activations[submodule] = activations[~self.read]
+            self.activations[submodule] = activations[~self.read].contiguous()
         self._n_activations = (~self.read).sum().item()
 
         while self._n_activations < self.n_ctxs * self.ctx_len:
