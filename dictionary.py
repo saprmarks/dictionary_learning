@@ -50,5 +50,29 @@ class AutoEncoder(Dictionary, nn.Module):
     def decode(self, f):
         return self.decoder(f) + self.bias
     
-    def forward(self, x):
-        return self.decode(self.encode(x))
+    def forward(self, x, output_features=False, ghost_mask=None):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        output_features : if True, return the encoded features as well as the decoded x
+        ghost_mask : if not None, run this autoencoder in "ghost mode" where features are masked
+        """
+        if ghost_mask is None: # normal mode
+            f = self.encode(x)
+            x_hat = self.decode(f)
+            if output_features:
+                return x_hat, f
+            else:
+                return x_hat
+        
+        else: # ghost mode
+            f_pre = self.encoder(x - self.bias)
+            f_ghost = t.exp(f_pre) * ghost_mask.to(f_pre)
+            f = nn.ReLU()(f_pre)
+
+            x_ghost = self.decode(f_ghost)
+            x_hat = self.decode(f)
+            if output_features:
+                return x_hat, x_ghost, f
+            else:
+                return x_hat, x_ghost
