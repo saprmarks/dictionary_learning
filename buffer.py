@@ -20,6 +20,7 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  in_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to return activations
+                 device='cpu' # device on which to store the activations
                  ):
         
         if io == 'in':
@@ -28,7 +29,7 @@ class ActivationBuffer:
                     in_feats = submodule.in_features
                 except:
                     raise ValueError("in_feats cannot be inferred and must be specified directly")
-            self.activations = t.empty(0, in_feats)
+            self.activations = t.empty(0, in_feats, device=device)
 
         elif io == 'out':
             if out_feats is None:
@@ -36,7 +37,7 @@ class ActivationBuffer:
                     out_feats = submodule.out_features
                 except:
                     raise ValueError("out_feats cannot be inferred and must be specified directly")
-            self.activations = t.empty(0, out_feats)
+            self.activations = t.empty(0, out_feats, device=device)
         elif io == 'in_to_out':
             if in_feats is None:
                 try:
@@ -60,6 +61,7 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
+        self.device = device
     
     def __iter__(self):
         return self
@@ -75,7 +77,7 @@ class ActivationBuffer:
 
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
-            idxs = unreads[t.randperm(len(unreads))[:self.out_batch_size]]
+            idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
             self.read[idxs] = True
             if self.io in ['in', 'out']:
                 return self.activations[idxs]
@@ -129,8 +131,8 @@ class ActivationBuffer:
                     hidden_states = hidden_states[0]
                 hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
     
-                self.activations = t.cat([self.activations, hidden_states.to('cpu')], dim=0)
-                self.read = t.zeros(len(self.activations)).bool()
+                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
+                self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
     
     def _refresh_in_to_out(self):
         """
