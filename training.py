@@ -186,13 +186,12 @@ def trainSAE(
     optimizers = {
         submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr) for submodule, ae in aes.items()
     }
-    def warmup_fn(step):
-        real_step = step + checkpoint_offset
-        return min([
-            step / warmup_steps, # at the start of training
-            (real_step % resample_steps) / warmup_steps, # after resampling neurons
-            1 # otherwise
-        ])
+    if resample_steps is None:
+        def warmup_fn(step):
+            return min(step / warmup_steps, 1.)
+    else:
+        def warmup_fn(step):
+            return min((step % resample_steps) / warmup_steps, 1.)
 
     schedulers = {
         submodule: t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn) for submodule, optimizer in optimizers.items()
