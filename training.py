@@ -8,6 +8,8 @@ from .buffer import ActivationBuffer
 import os
 from tqdm import tqdm
 
+EPS = 1e-8
+
 class ConstrainedAdam(t.optim.Adam):
     """
     A variant of Adam where some of the parameters are constrained to have unit norm.
@@ -41,24 +43,69 @@ def entropy(p, eps=1e-8):
     return ent.sum(dim=-1).mean()
 
 
-def sae_loss(x, ae, sparsity_penalty, use_entropy=False, separate=False):
+def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=False, num_samples_since_activated=None, ghost_threshold=None):
     """
     Compute the loss of an autoencoder on some activations
-    If separate is True, return the MSE loss and the sparsity loss separately
+    If separate is True, return the MSE loss, the sparsity loss, and the ghost loss separately
+    If num_samples_since_activated is not None, update it in place
+    If ghost_threshold is not None, use it to do ghost grads
     """
-    f = ae.encode(x)
-    x_hat = ae.decode(f)
-    mse_loss = t.nn.MSELoss()(
-        x, x_hat
-    ).sqrt()
+    if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
+        in_acts, out_acts = activations
+    else: # typically the input to the autoencoder is the same as the output
+        in_acts = out_acts = activations
+    
+    ghost_grads = False
+    if ghost_threshold is not None:
+        if num_samples_since_activated is None:
+            raise ValueError("num_samples_since_activated must be provided for ghost grads")
+        ghost_mask = num_samples_since_activated > ghost_threshold
+        if ghost_mask.sum() > 0: # if there are dead neurons
+            ghost_grads = True
+        else:
+            ghost_loss = None
+
+    if not ghost_grads: # if we're not doing ghost grads
+        x_hat, f = ae(in_acts, output_features=True)
+        mse_loss = t.nn.MSELoss()(
+            out_acts, x_hat
+        ).sqrt()
+    
+    else: # if we're doing ghost grads        
+        x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
+        residual = out_acts - x_hat
+        mse_loss = t.sqrt((residual ** 2).mean())
+        x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
+        ghost_loss = t.nn.MSELoss()(
+            residual, x_ghost
+        ).sqrt()
+
+    if num_samples_since_activated is not None: # update the number of samples since each neuron was last activated
+        deads = (f == 0).all(dim=0)
+        num_samples_since_activated.copy_(
+            t.where(
+                deads,
+                num_samples_since_activated + 1,
+                0
+            )
+        )
+    
     if use_entropy:
         sparsity_loss = entropy(f)
     else:
         sparsity_loss = f.norm(p=1, dim=-1).mean()
+    
     if separate:
-        return mse_loss, sparsity_loss
+        if ghost_threshold is None:
+            return mse_loss, sparsity_loss
+        else:
+            return mse_loss, sparsity_loss, ghost_loss
     else:
-        return mse_loss + sparsity_penalty * sparsity_loss
+        if not ghost_grads:
+            return mse_loss + sparsity_penalty * sparsity_loss
+        else:
+            return mse_loss + sparsity_penalty * sparsity_loss + ghost_loss * (mse_loss.detach() / (ghost_loss.detach() + EPS))
+
     
 def resample_neurons(deads, activations, ae, optimizer):
     """
@@ -110,7 +157,8 @@ def trainSAE(
         entropy=False,
         steps=None, # if None, train until activations are exhausted
         warmup_steps=1000, # linearly increase the learning rate for this many steps
-        resample_steps=25000, # how often to resample dead neurons
+        resample_steps=None, # how often to resample dead neurons
+        ghost_threshold=None, # how many steps a neuron has to be dead for it to turn into a ghost
         save_steps=None, # how often to save checkpoints
         save_dirs=None, # dictionary of directories to save checkpoints to
         checkpoint_offset=0, # if resuming training, the step number of the last checkpoint
@@ -126,13 +174,13 @@ def trainSAE(
         dictionary_sizes = {submodule: dictionary_sizes for submodule in buffer.submodules}
 
     aes = {}
-    alives = {}
+    num_samples_since_activateds = {}
     for submodule in buffer.submodules:
         ae = AutoEncoder(activation_dims[submodule], dictionary_sizes[submodule]).to(device)
         if load_dirs is not None:
             ae.load_state_dict(t.load(os.path.join(load_dirs[submodule])))
         aes[submodule] = ae
-        alives[submodule] = t.zeros(dictionary_sizes[submodule], dtype=t.bool, device=device)
+        num_samples_since_activateds[submodule] = t.zeros(dictionary_sizes[submodule], dtype=int, device=device)
 
     # set up optimizer and scheduler
     optimizers = {
@@ -157,32 +205,29 @@ def trainSAE(
 
         for submodule, act in acts.items():
             act = act.to(device)
-            ae, alive, optimizer, scheduler = aes[submodule], alives[submodule], optimizers[submodule], schedulers[submodule]
+            ae, num_samples_since_activated, optimizer, scheduler \
+                = aes[submodule], num_samples_since_activateds[submodule], optimizers[submodule], schedulers[submodule]
             optimizer.zero_grad()
-            loss = sae_loss(act, ae, sparsity_penalty, entropy)
+            loss = sae_loss(acts, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
             loss.backward()
             optimizer.step()
             scheduler.step()
 
             # deal with resampling neurons
-            if resample_steps is not None:
-                with t.no_grad():
-                    if real_step % resample_steps > resample_steps // 2:
-                        f = ae.encode(act)
-                        alive = t.logical_or(alive, (f != 0).any(dim=0))
-                    if real_step % resample_steps == resample_steps // 2:
-                        alive = t.zeros(dictionary_sizes[submodule], dtype=t.bool, device=device)
-                    if real_step % resample_steps == resample_steps - 1:
-                        dead = ~alive
-                        if dead.sum() > 0:
-                            print(f"resampling {dead.sum().item()} dead neurons")
-                            resample_neurons(dead, act, ae, optimizer)
+            if resample_steps is not None and step % resample_steps == 0:
+                # resample neurons who've been dead for the last resample_steps / 2 steps
+                resample_neurons(num_samples_since_activated > resample_steps / 2, acts, ae, optimizer)
 
             # logging
-            if log_steps is not None and real_step % log_steps == 0:
+            if log_steps is not None and step % log_steps == 0:
                 with t.no_grad():
-                    mse_loss, sparsity_loss = sae_loss(act, ae, sparsity_penalty, entropy, separate=True)
-                    print(f"step {real_step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
+                    losses = sae_loss(acts, ae, sparsity_penalty, entropy, separate=True, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
+                    if ghost_threshold is None:
+                        mse_loss, sparsity_loss = losses
+                        print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
+                    else:
+                        mse_loss, sparsity_loss, ghost_loss = losses
+                        print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}, ghost_loss: {ghost_loss}")
                     # dict_acts = ae.encode(acts)
                     # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
                     # if isinstance(activations, ActivationBuffer):

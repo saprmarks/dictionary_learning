@@ -102,9 +102,10 @@ def evaluate(
         acts = next(activations).to(device)
 
         # compute reconstruction (L2) loss and sparsity loss
-        mse_loss, sparsity_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
+        mse_loss, sparsity_loss, ghost_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
         out['mse_loss'] = mse_loss.item() ** 2
         out['sparsity_loss'] = sparsity_loss.item()
+        out['ghost_loss'] = ghost_loss.item() ** 2
 
         # compute mean L0 norm and percentage of neurons alive
         features = dictionary.encode(acts)
