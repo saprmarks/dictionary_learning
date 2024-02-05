@@ -8,6 +8,8 @@ from .buffer import ActivationBuffer
 import os
 from tqdm import tqdm
 
+EPS = 1e-8
+
 class ConstrainedAdam(t.optim.Adam):
     """
     A variant of Adam where some of the parameters are constrained to have unit norm.
@@ -60,13 +62,20 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
         ).sqrt()
     
     else: # if we're doing ghost grads
-        x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=num_samples_since_activated > ghost_threshold)
-        residual = out_acts - x_hat
-        mse_loss = t.sqrt((residual ** 2).mean())
-        x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach())
-        ghost_loss = t.nn.MSELoss()(
-            residual, x_ghost
-        ).sqrt()
+        if num_samples_since_activated is None:
+            raise ValueError("num_samples_since_activated must be provided for ghost grads")
+        ghost_mask = num_samples_since_activated > ghost_threshold
+
+        if ghost_mask.sum() == 0: # if no neurons are dead
+            ghost_loss = None
+        else:
+            x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
+            residual = out_acts - x_hat
+            mse_loss = t.sqrt((residual ** 2).mean())
+            x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
+            ghost_loss = t.nn.MSELoss()(
+                residual, x_ghost
+            ).sqrt()
 
     if num_samples_since_activated is not None: # update the number of samples since each neuron was last activated
         deads = (f == 0).all(dim=0)
@@ -87,10 +96,10 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
         else:
             return mse_loss, sparsity_loss, ghost_loss
     else:
-        if ghost_threshold is None:
+        if ghost_threshold is None or ghost_loss is None:
             return mse_loss + sparsity_penalty * sparsity_loss
         else:
-            return mse_loss + sparsity_penalty * sparsity_loss + ghost_loss * (mse_loss / ghost_loss).detach()
+            return mse_loss + sparsity_penalty * sparsity_loss + ghost_loss * (mse_loss.detach() / (ghost_loss.detach() + EPS))
 
     
 def resample_neurons(deads, activations, ae, optimizer):
