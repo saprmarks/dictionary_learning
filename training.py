@@ -47,7 +47,7 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
     """
     Compute the loss of an autoencoder on some activations
     If separate is True, return the MSE loss, the sparsity loss, and the ghost loss separately
-    If num_samples_since_activated is not None, use it to do ghost grads
+    If num_samples_since_activated is not None, update it in place
     If ghost_threshold is not None, use it to do ghost grads
     """
     if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
@@ -55,34 +55,39 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
     else: # typically the input to the autoencoder is the same as the output
         in_acts = out_acts = activations
     
-    if ghost_threshold is None: # if we're not doing ghost grads
+    ghost_grads = False
+    if ghost_threshold is not None:
+        if num_samples_since_activated is None:
+            raise ValueError("num_samples_since_activated must be provided for ghost grads")
+        ghost_mask = num_samples_since_activated > ghost_threshold
+        if ghost_mask.sum() > 0: # if there are dead neurons
+            ghost_grads = True
+        else:
+            ghost_loss = None
+
+    if not ghost_grads: # if we're not doing ghost grads
         x_hat, f = ae(in_acts, output_features=True)
         mse_loss = t.nn.MSELoss()(
             out_acts, x_hat
         ).sqrt()
     
-    else: # if we're doing ghost grads
-        if num_samples_since_activated is None:
-            raise ValueError("num_samples_since_activated must be provided for ghost grads")
-        ghost_mask = num_samples_since_activated > ghost_threshold
-
-        if ghost_mask.sum() == 0: # if no neurons are dead
-            ghost_loss = None
-        else:
-            x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
-            residual = out_acts - x_hat
-            mse_loss = t.sqrt((residual ** 2).mean())
-            x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
-            ghost_loss = t.nn.MSELoss()(
-                residual, x_ghost
-            ).sqrt()
+    else: # if we're doing ghost grads        
+        x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
+        residual = out_acts - x_hat
+        mse_loss = t.sqrt((residual ** 2).mean())
+        x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
+        ghost_loss = t.nn.MSELoss()(
+            residual, x_ghost
+        ).sqrt()
 
     if num_samples_since_activated is not None: # update the number of samples since each neuron was last activated
         deads = (f == 0).all(dim=0)
-        num_samples_since_activated = t.where(
-            deads,
-            num_samples_since_activated + 1,
-            0
+        num_samples_since_activated.copy_(
+            t.where(
+                deads,
+                num_samples_since_activated + 1,
+                0
+            )
         )
     
     if use_entropy:
@@ -96,7 +101,7 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
         else:
             return mse_loss, sparsity_loss, ghost_loss
     else:
-        if ghost_threshold is None or ghost_loss is None:
+        if not ghost_grads:
             return mse_loss + sparsity_penalty * sparsity_loss
         else:
             return mse_loss + sparsity_penalty * sparsity_loss + ghost_loss * (mse_loss.detach() / (ghost_loss.detach() + EPS))
