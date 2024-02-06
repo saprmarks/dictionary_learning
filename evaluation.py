@@ -21,7 +21,7 @@ def loss_recovered(
     """
     
     # unmodified logits
-    with model.invoke(text) as invoker:
+    with model.invoke(text, truncation=True) as invoker:
         pass
     try:
         logits_original = invoker.output.logits
@@ -29,7 +29,7 @@ def loss_recovered(
         logits_original = invoker.output
     
     # logits when replacing component output with reconstruction by autoencoder
-    with model.invoke(text) as invoker:
+    with model.invoke(text, truncation=True) as invoker:
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -55,7 +55,7 @@ def loss_recovered(
         logits_reconstructed = invoker.output
 
     # logits when zero ablating components
-    with model.invoke(text) as invoker:
+    with model.invoke(text, truncation=True) as invoker:
         for submodule in submodules:
             if io == 'in':
                 if type(submodule.input.shape) == tuple:

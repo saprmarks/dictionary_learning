@@ -124,14 +124,14 @@ We'll report the following statistics for our `5_32768` set. These were measured
 
 ### MLP output dictionaries
 
-| Layer         | MSE Loss | Variance Explained | L1 | L0   | Percent Alive | CE Diff | Percent Recovered |
+| Layer         | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % Recovered |
 |---------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.0018   | 0.97               | 6.3           | 9.4  | 37          | 0.050   | 99                |
-| 1 | 0.0090   | 0.78               | 4.9           | 22.9 | 48          | 0.080   | 87                |
-| 2 | 0.015    | 0.98               | 7.8           | 23.8 | 31          | 0.12    | 77                |
-| 3 | 0.042    | 0.75               | 10.8          | 44.1 | 19          | 0.19    | 74                |
-| 4 | 0.050    | 0.86               | 12            | 27.2 | 22          | 0.21    | 78                |
-| 5 | 0.093    | 0.91               | 21            | 20.7 | 6.6         | 0.30    | 90                |
+| 0 | 0.0018   | 97               | 6.3           | 9.4  | 37          | 0.050   | 99                |
+| 1 | 0.0090   | 78               | 4.9           | 22.9 | 48          | 0.080   | 87                |
+| 2 | 0.015    | 98               | 7.8           | 23.8 | 31          | 0.12    | 77                |
+| 3 | 0.042    | 75               | 10.8          | 44.1 | 19          | 0.19    | 74                |
+| 4 | 0.050    | 86               | 12            | 27.2 | 22          | 0.21    | 78                |
+| 5 | 0.093    | 91               | 21            | 20.7 | 6.6         | 0.30    | 90                |
 
 ### Residual stream dictionaries
 NOTE: the layer indices here are, confusingly, offset by 1. So the layer 0 dictionaries is not for the embeddings -- it's for the residual stream at the *end* of layer 0, i.e. what is normally called the layer 1 residual stream. Sorry about the confusion, hopefully this won't happen in future dictionary releases.
