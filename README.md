@@ -112,14 +112,15 @@ There are also MLP three sets of MLP output dictionaries, all for Pythia-70m-ded
 
 ## Statistics for our dictionaries
 
-We'll report the following statistics for our `5_32768` set. 
+We'll report the following statistics for our `5_32768` set. These were measured using the code in `evaluation.py`.
 * **MSE loss**: average squared L2 distance between an activation and the autoencoder's reconstruction of it
 * **L1 loss**: a measure of the autoencoder's sparsity
 * **L0**: average number of features active above a random token
 * **Percentage of neurons alive**: fraction of the dictionary features which are active on at least one token out of 8192 random tokens
 * **CE diff**: difference between the usual cross-entropy loss of the model for next token prediction and the cross entropy when replacing activations with our dictionary's reconstruction
 * **Percentage of loss recovered**: when replacing the activation with the dictionary's reconstruction, the percentage of the model's cross-entropy loss on next token prediction that is recovered (relative to the baseline of zero ablating the activation)
-These were measured using the code in `evaluation.py`. For 
+
+
 
 ### MLP output dictionaries
 
