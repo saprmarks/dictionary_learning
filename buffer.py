@@ -120,14 +120,13 @@ class ActivationBuffer:
                 
                 tokens = self.tokenized_batch()['input_ids']
     
-                with self.model.generate(max_new_tokens=1, pad_token_id=self.model.tokenizer.pad_token_id) as generator:
-                    with generator.invoke(tokens) as invoker:
-                        if self.io == 'in':
-                            hidden_states = self.submodule.input.save()
-                        else:
-                            hidden_states = self.submodule.output.save()
+                with self.model.invoke(tokens):
+                    if self.io == 'in':
+                        hidden_states = self.submodule.input.save()
+                    else:
+                        hidden_states = self.submodule.output.save()
                 hidden_states = hidden_states.value
-                if isinstance(hidden_states, tuple):
+                while isinstance(hidden_states, tuple):
                     hidden_states = hidden_states[0]
                 hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
     
@@ -145,13 +144,12 @@ class ActivationBuffer:
                     
             tokens = self.tokenized_batch()['input_ids']
 
-            with self.model.generate(max_new_tokens=1, pad_token_id=self.model.tokenizer.pad_token_id) as generator:
-                with generator.invoke(tokens) as invoker:
-                    hidden_states_in = self.submodule.input.save()
-                    hidden_states_out = self.submodule.output.save()
+            with self.model.invoke(tokens):
+                hidden_states_in = self.submodule.input.save()
+                hidden_states_out = self.submodule.output.save()
             for i, hidden_states in enumerate([hidden_states_in, hidden_states_out]):
                 hidden_states = hidden_states.value
-                if isinstance(hidden_states, tuple):
+                while isinstance(hidden_states, tuple):
                     hidden_states = hidden_states[0]
                 hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
                 if i == 0:

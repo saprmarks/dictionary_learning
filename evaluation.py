@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 def loss_recovered(
-        tokens, # a tokenized batch
+        text, # a batch of text
         model, # an nnsight LanguageModel
         submodules, # submodules of model
         dictionaries, # dictionaries for submodules
@@ -21,12 +21,15 @@ def loss_recovered(
     """
     
     # unmodified logits
-    with model.invoke(tokens) as invoker:
+    with model.invoke(text) as invoker:
         pass
-    logits_original = invoker.output.logits
+    try:
+        logits_original = invoker.output.logits
+    except:
+        logits_original = invoker.output
     
     # logits when replacing component output with reconstruction by autoencoder
-    with model.invoke(tokens) as invoker:
+    with model.invoke(text) as invoker:
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -45,11 +48,14 @@ def loss_recovered(
                     submodule.output = dictionary(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
-        
-    logits_reconstructed = invoker.output.logits
     
+    try:
+        logits_reconstructed = invoker.output.logits
+    except:
+        logits_reconstructed = invoker.output
+
     # logits when zero ablating components
-    with model.invoke(tokens) as invoker:
+    with model.invoke(text) as invoker:
         for submodule in submodules:
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -69,7 +75,15 @@ def loss_recovered(
             else:
                 raise ValueError(f"invalid io: {io}")
 
-    logits_zero = invoker.output.logits
+    try:
+        logits_zero = invoker.output.logits
+    except:
+        logits_zero = invoker.output
+
+    try:
+        tokens = invoker.input['input_ids'].to(logits_original.device)
+    except:
+        tokens = invoker.input['inputs'].to(logits_original.device)
     
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
@@ -89,6 +103,7 @@ def evaluate(
         submodule, # a submodule of model
         dictionary, # a dictionary
         activations, # an ActivationBuffer
+        batch_size=None, # batch size for loss recovered
         entropy=False, # whether to use entropy regularization
         hist_save_path=None, # path for saving histograms
         hist_title=None, # title for histograms
@@ -102,10 +117,14 @@ def evaluate(
         acts = next(activations).to(device)
 
         # compute reconstruction (L2) loss and sparsity loss
-        mse_loss, sparsity_loss, ghost_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
+        mse_loss, sparsity_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
         out['mse_loss'] = mse_loss.item() ** 2
         out['sparsity_loss'] = sparsity_loss.item()
-        out['ghost_loss'] = ghost_loss.item() ** 2
+
+        # compute variance explained        
+        total_variance = t.var(acts, dim=0).sum()
+        residual_variance = t.var(acts - dictionary(acts), dim=0).sum()
+        out['variance_explained'] = (1 - residual_variance / total_variance).item()
 
         # compute mean L0 norm and percentage of neurons alive
         features = dictionary.encode(acts)
@@ -125,15 +144,11 @@ def evaluate(
             plt.close()
         
         # compute loss recovered
-        tokens = activations.tokenized_batch().input_ids
-        tokens = tokens.to(device)
         loss_original, loss_reconstructed, loss_zero = \
-            loss_recovered(tokens, model, [submodule], [dictionary], io=io, pct=False)
+            loss_recovered(activations.text_batch(batch_size=batch_size), model, [submodule], [dictionary], io=io, pct=False)
         out['loss_original'] = loss_original
         out['loss_reconstructed'] = loss_reconstructed
         out['loss_zero'] = loss_zero
         out['percent_recovered'] = (loss_reconstructed - loss_zero) / (loss_original - loss_zero)
 
         return out
-
-# %%
