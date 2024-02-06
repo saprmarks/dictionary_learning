@@ -83,7 +83,7 @@ def loss_recovered(
     try:
         tokens = invoker.input['input_ids'].to(logits_original.device)
     except:
-        tokens = invoker.input['inputs'].to(logits_original.device)
+        tokens = invoker.input['input'].to(logits_original.device)
     
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
