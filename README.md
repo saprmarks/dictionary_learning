@@ -147,7 +147,7 @@ NOTE: the layer indices here are, confusingly, offset by 1. So the layer 0 dicti
 
 ### Attention output dictionaries
 
-| Layer          | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % Recovered |
+| Layer          | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
 |----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
 | 0 | 0.0042   | 85               | 5.2           | 35   | 17          | 0.055   | 96                |
 | 1 | 0.0076   | 76               | 4.9           | 28.4 | 15          | 0.068   | 85                |
