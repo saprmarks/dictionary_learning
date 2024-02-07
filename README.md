@@ -118,13 +118,13 @@ We'll report the following statistics for our `5_32768` set. These were measured
 * **L0**: average number of features active above a random token
 * **Percentage of neurons alive**: fraction of the dictionary features which are active on at least one token out of 8192 random tokens
 * **CE diff**: difference between the usual cross-entropy loss of the model for next token prediction and the cross entropy when replacing activations with our dictionary's reconstruction
-* **Percentage of loss recovered**: when replacing the activation with the dictionary's reconstruction, the percentage of the model's cross-entropy loss on next token prediction that is recovered (relative to the baseline of zero ablating the activation)
+* **Percentage of CE loss recovered**: when replacing the activation with the dictionary's reconstruction, the percentage of the model's cross-entropy loss on next token prediction that is recovered (relative to the baseline of zero ablating the activation)
 
 
 
 ### MLP output dictionaries
 
-| Layer         | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % Recovered |
+| Layer         | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
 |---------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
 | 0 | 0.0018   | 97               | 6.3           | 9.4  | 37          | 0.050   | 99                |
 | 1 | 0.0090   | 78               | 4.9           | 22.9 | 48          | 0.080   | 87                |
@@ -136,25 +136,25 @@ We'll report the following statistics for our `5_32768` set. These were measured
 ### Residual stream dictionaries
 NOTE: the layer indices here are, confusingly, offset by 1. So the layer 0 dictionaries is not for the embeddings -- it's for the residual stream at the *end* of layer 0, i.e. what is normally called the layer 1 residual stream. Sorry about the confusion, hopefully this won't happen in future dictionary releases.
 
-| Layer           | MSE Loss | Variance Explained | L1 | L0   | Percent Alive | CE Diff | Percent Recovered |
+| Layer           | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
 |-----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.012    | 0.85               | 7.7           | 17   | 27          | 0.30    | 94                |
-| 1 | 0.031    | 0.76               | 8.8           | 15.9 | 26          | 0.54    | 89                |
-| 2 | 0.064    | 0.93               | 15            | 34.8 | 24          | 1.4     | 76                |
-| 3 | 0.066    | 0.93               | 15            | 22.6 | 20          | 1.1     | 88                |
-| 4 | 0.098    | 0.81               | 14            | 17.7 | 17          | 0.89    | 83                |
-| 5 | 0.21     | 0.82               | 22            | 15.2 | 9.3         | 1.4     | 73                |
+| 0 | 0.012    | 85               | 7.7           | 17   | 27          | 0.30    | 94                |
+| 1 | 0.031    | 76               | 8.8           | 15.9 | 26          | 0.54    | 89                |
+| 2 | 0.064    | 93               | 15            | 34.8 | 24          | 1.4     | 76                |
+| 3 | 0.066    | 93               | 15            | 22.6 | 20          | 1.1     | 88                |
+| 4 | 0.098    | 81               | 14            | 17.7 | 17          | 0.89    | 83                |
+| 5 | 0.21     | 82               | 22            | 15.2 | 9.3         | 1.4     | 73                |
 
 ### Attention output dictionaries
 
-| Layer          | MSE Loss | Variance Explained | L1 | L0   | Percent Alive | CE Diff | Percent Recovered |
+| Layer          | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % Recovered |
 |----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.0042   | 0.85               | 5.2           | 35   | 17          | 0.055   | 96                |
-| 1 | 0.0076   | 0.76               | 4.9           | 28.4 | 15          | 0.068   | 85                |
-| 2 | 0.022    | 0.75               | 10            | 59.9 | 10          | 0.19    | 76                |
-| 3 | 0.012    | 0.78               | 6.5           | 34.2 | 10          | 0.10    | 83                |
-| 4 | 0.0075   | 0.65               | 3.7           | 21.3 | 14          | 0.029   | 89                |
-| 5 | 0.014    | 0.76               | 5.3           | 17.7 | 7.6         | 0.060   | 82                |
+| 0 | 0.0042   | 85               | 5.2           | 35   | 17          | 0.055   | 96                |
+| 1 | 0.0076   | 76               | 4.9           | 28.4 | 15          | 0.068   | 85                |
+| 2 | 0.022    | 75               | 10            | 59.9 | 10          | 0.19    | 76                |
+| 3 | 0.012    | 78               | 6.5           | 34.2 | 10          | 0.10    | 83                |
+| 4 | 0.0075   | 65               | 3.7           | 21.3 | 14          | 0.029   | 89                |
+| 5 | 0.014    | 76               | 5.3           | 17.7 | 7.6         | 0.060   | 82                |
 
 
 # Extra functionality supported by this repo
