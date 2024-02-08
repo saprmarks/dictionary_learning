@@ -19,7 +19,7 @@ To use `dictionary_learning`, include it as a subdirectory in some project's dir
 
 To use a dictionary, just import the dictionary class (currently only autoencoders are supported), initialize an `AutoEncoder`, and load a saved state_dict.
 ```python
-from dictionary_learning.dictionary import AutoEncoder
+from dictionary_learning import AutoEncoder
 import torch
 
 activation_dim = 512 # dimension of the NN's activations to be autoencoded
@@ -32,6 +32,9 @@ ae.load_state_dict(torch.load("path/to/dictionary/weights"))
 activations = torch.randn(64, activation_dim)
 features = ae.encode(activations) # get features from activations
 reconstructed_activations = ae.decode(features)
+
+# if you want to use both the features and the reconstruction, you can get both at once
+reconstructed_activations, features = ae(activations, output_features=True)
 ```
 
 Dictionaries have `encode`, `decode`, and `forward` methods -- see `dictionary.py`.
@@ -42,12 +45,12 @@ To train your own dictionaries, you'll need to understand a bit about our infras
 
 One key object is the `ActivationBuffer`, defined in `buffer.py`. Following [Neel Nanda's appraoch](https://www.lesswrong.com/posts/fKuugaxt2XLTkASkk/open-source-replication-and-commentary-on-anthropic-s), `ActivationBuffer`s maintain a buffer of NN activations, which it outputs in batches.
 
-An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a submodule (e.g. an MLP), and a generator which yields strings (the text data). It processes a large number of strings, up to some capacity, and saves the submodule's activations on your CPU. You sample batches from it, and when it is half-depleted, it refreshes itself with new text data.
+An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a submodule (e.g. an MLP), and a generator which yields strings (the text data). It processes a large number of strings, up to some capacity, and saves the submodule's activations. You sample batches from it, and when it is half-depleted, it refreshes itself with new text data.
 
 Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
 ```python
 from nnsight import LanguageModel
-from dictionary_learning.buffer import ActivationBuffer
+from dictionary_learning import ActivationBuffer
 from dictionary_learning.training import trainSAE
 
 model = LanguageModel(
@@ -69,6 +72,8 @@ buffer = ActivationBuffer(
     model,
     submodule,
     out_feats=activation_dim, # output dimension of the model component
+    n_ctxs=3e4, # you can set this higher or lower dependong on your available memory
+    device='cuda:0' # doesn't have to be the same device that you train your autoencoder on
 ) # buffer will return batches of tensors of dimension = submodule's output dimension
 
 # train the sparse autoencoder (SAE)
@@ -81,15 +86,13 @@ ae = trainSAE(
     device='cuda:0'
 )
 ```
+Some technical notes our training infrastructure and supported features:
+* Training uses the `ConstrainedAdam` optimizer defined in `training.py`. This is a variant of Adam which supports constraining the `AutoEncoder`'s decoder weights to be norm 1.
+* Neuron resampling: if a `resample_steps` argument is passed to `trainSAE`, then dead neurons will periodically be resampled according to the procedure specified [here](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling).
+* Ghost grads: if a `ghost_threshold` argument is passed to `trainSAE`, then [ghost grads](https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling) is used. Neurons which haven't fired in more than `ghost_threshold` steps are treated as dead for purposes of ghost grads.
+* Learning rate warmup: if a `warmup_steps` argument is passed to `trainSAE`, then a linear LR warmup is used at the start of training and, if doing neuron resampling, also after every time neurons are resampled.
 
-Aside from the use of the `ActivationBuffer`, we train our SAEs as specified in [Anthropic's paper](https://transformer-circuits.pub/2023/monosemantic-features/index.html). This includes:
-* Using untied encoder/decoder weights
-* Constraining decoder vectors to have unit norm.
-* Resampling dead neurons according to the procedure specified [here](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling).
-
-In addition, we have a brief learning-rate linear warm-up at the beginning of training; this is to fix a problem that we noticed when using the Adam optimizer, namely that many neurons were killed in the first few gradient steps. (There was no such problem when using SGD.)
-
-If you are working with a model/model component where the activations are tuples `(hidden_state, other_stuff)`, you'll need to modify the code slightly, changing `.value` into `.value[0]` in a number of places. For example, this is the case if you would like to train a dictionary on the residual stream of a Pythia model.
+If `submodule` is a model component where the activations are tuples (e.g. this is common when working with residual stream activations), then the buffer yields the first coordinate of the tuple.
 
 # Downloading our open-source dictionaries
 
@@ -98,63 +101,65 @@ To download our open-source dictionaries and associated training checkpoints, na
 wget -r --no-parent https://baulab.us/u/smarks/autoencoders/
 ```
 
-Currently, we've made available two sets of dictionaries for EleutherAI's pythia-70m-deduped. Both were both trained on 512-dimensional MLP *output* activations (not the hidden layer), using ~800M tokens from [The Pile](https://pile.eleuther.ai/). 
-* The first set, called `0_8192`, consists of dictionaries of size $8192 = 16 \times 512$. These were trained with an l1 penalty of `1e-3`. 
-* The second set, called `1_32768`, consists of dictionaries of size $32768 = 64 \times 512$. These were trained with an l1 penalty of `3e-3`.
+Currently, the main thing to look for is the dictionaries in our `5_32768` set; this set has dictionaries for MLP outputs, attention outputs, and residual streams in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from the pile with neuron resampling every 250M tokens.
 
-Let's explain the directory structure by example. The `autoencoders/pythia-70m-deduped/mlp_out_layer1/0_8192` directory corresponds to the layer 1 MLP dictionary from the first set. This directory contains:
+Let's explain the directory structure by example. The `autoencoders/pythia-70m-deduped/mlp_out_layer1/5_32768` directory corresponds to the layer 1 MLP dictionary from `5_32768` set. This directory contains:
 * `ae.pt`: the `state_dict` of the fully trained dictionary
 * `config.json`: a json file which specifies the hyperparameters used to train the dictionary
 * `checkpoints/`: a directory containing training checkpoints of the form `ae_step.pt`.
 
+There are also MLP three sets of MLP output dictionaries, all for Pythia-70m-deduped: `0_8192`, `1_32768`, and `2_32768` (the number after the underscore indicates the hidden dimension of the autoencoder). For more information about the `0_8192` and `1_32768` sets, see [here](https://www.lesswrong.com/posts/AaoWLcmpY3LKvtdyq/some-open-source-dictionaries-and-dictionary-learning). The `2_32768` set is shrouded in mystery and man may never know its true nature.
+
 ## Statistics for our dictionaries
 
-We'll report the following statistics:
+We'll report the following statistics for our `5_32768` set. These were measured using the code in `evaluation.py`.
 * **MSE loss**: average squared L2 distance between an activation and the autoencoder's reconstruction of it
 * **L1 loss**: a measure of the autoencoder's sparsity
 * **L0**: average number of features active above a random token
 * **Percentage of neurons alive**: fraction of the dictionary features which are active on at least one token out of 8192 random tokens
-* **Percentage of loss recovered**: when replacing the MLP's output with the dictionary's reconstruction of the output, the percentage of the model's cross-entropy loss on token prediction is recovered (relative to the baseline of zero ablating the MLP's output)
-
-For dictionaries in the `0_8192` set:
-| Layer | MSE Loss | L1 loss | L0 | % Alive | % Loss Recovered |
-|-------|----------|---------|----|---------|------------------|
-| 0 | 0.056 | 6.132 | 9.951 | 0.998 | 0.984 |
-| 1 | 0.089 | 6.677 | 44.739 | 0.887 | 0.924 |
-| 2 | 0.108 | 11.44 | 62.156 | 0.587 | 0.867 |
-| 3 | 0.135 | 23.773 | 175.303 | 0.588 | 0.902 |
-| 4 | 0.148 | 27.084 | 174.07 | 0.806 | 0.927 |
-| 5 | 0.179 | 47.126 | 235.05 | 0.672 | 0.972 |
-
-For dictionaries in the `1_32768` set:
-| Layer | MSE Loss | L1 loss | L0 | % Alive | % Loss Recovered |
-|-------|----------|---------|----|---------|------------------|
-| 0 | 0.09 | 4.32 | 2.873 | 0.174 | 0.946 |
-| 1 | 0.13 | 2.798 | 11.256 | 0.159 | 0.768 |
-| 2 | 0.152 | 6.151 | 16.381 | 0.118 | 0.724 |
-| 3 | 0.211 | 11.571 | 39.863 | 0.226 | 0.765 |
-| 4 | 0.222 | 13.665 | 29.235 | 0.19 | 0.816 |
-| 5 | 0.265 | 26.4 | 43.846 | 0.13 | 0.931 |
-
-Here also are histograms of feature frequencies over a batch of 16384 random tokens.
-
-![Image](histograms/0_8192_hist.png)
-![Image](histograms/1_32768_hist.png)
+* **CE diff**: difference between the usual cross-entropy loss of the model for next token prediction and the cross entropy when replacing activations with our dictionary's reconstruction
+* **Percentage of CE loss recovered**: when replacing the activation with the dictionary's reconstruction, the percentage of the model's cross-entropy loss on next token prediction that is recovered (relative to the baseline of zero ablating the activation)
 
 
-Some observations:
-* The l1 penalty for the `1_32768` seems to have been too large; only 10-20% of the neurons are alive, and the loss recovered is much worse. That said, we'll remark that after examining features from both sets of dictionaries, the dictionaries from the `1_32768` set seem to have more interpretable features than those from the `0_8192` set (though it's hard to tell).
-    * In particular, we suspect that for `0_8192`, the many high-frequency features in the later layers are uninterpretable but help significantly with reconstructing activations, **resulting in deceptively good-looking statistics**. (See the bullet point below regarding neuron resampling and bimodality.)
-* As we progress through the layers, the dictionaries tend to get worse along most metrics (except for % loss recovered). This may have to do with the growing scale of the activations themselves as one moves through the layers of pythia models (h/t to Arthur Conmy for raising this hypothesis).
 
-Some miscellaneous details for those who want to train dictionaries:
-* We note that our dictionary features are significantly higher frequency than the features in [Anthropic's](https://transformer-circuits.pub/2023/monosemantic-features/index.html) and [Neel Nanda's](https://www.lesswrong.com/posts/fKuugaxt2XLTkASkk/open-source-replication-and-commentary-on-anthropic-s). We don't know if this difference is because we are working with a multi-layer model or if it is because of a difference in hyperparameters. We generally suspect it would be better if we were learning features of lower frequency.
-    * We'll note, however, that after layer 0, it doesn't seem like many of our features are of the form "always fire on a particular token," whereas many of Anthropic's feature were. So it's possible that more interesting features also tend to be higher-frequency. See [here](https://www.lesswrong.com/posts/tEPHGZAb63dfq2v8n/?commentId=zXEsbbJHsg98FY6uj) for some flavor.
-* Even though the number of steps in `config.json` for `1_32768` is twice that for `0_8192`, the former dictionaries were only trained on for about 3000 more steps (so basically about the same amount).
-* We're not sure, but the bimodality in the histograms for `0_8192` may be due to dead neurons being resampled. We resample every 30000 steps, including at step 90000 out of 100000 total steps. The resampled features tend to be very high-frequency, and it might take more than 10000 steps for the peak to move to the left.
-* We used `out_batch_size=8192` for our `ActivationBuffer`s and tried to set `n_ctxs` large enough that there wasn't likely to be too many tokens taken from the same context.
+### MLP output dictionaries
+
+| Layer         | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
+|---------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
+| 0 | 0.0018   | 97               | 6.3           | 9.4  | 37          | 0.050   | 99                |
+| 1 | 0.0090   | 78               | 4.9           | 22.9 | 48          | 0.080   | 87                |
+| 2 | 0.015    | 98               | 7.8           | 23.8 | 31          | 0.12    | 77                |
+| 3 | 0.042    | 75               | 10.8          | 44.1 | 19          | 0.19    | 74                |
+| 4 | 0.050    | 86               | 12            | 27.2 | 22          | 0.21    | 78                |
+| 5 | 0.093    | 91               | 21            | 20.7 | 6.6         | 0.30    | 90                |
+
+### Residual stream dictionaries
+NOTE: the layer indices here are, confusingly, offset by 1. So the layer 0 dictionaries is not for the embeddings -- it's for the residual stream at the *end* of layer 0, i.e. what is normally called the layer 1 residual stream. Sorry about the confusion, hopefully this won't happen in future dictionary releases.
+
+| Layer           | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
+|-----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
+| 0 | 0.012    | 85               | 7.7           | 17   | 27          | 0.30    | 94                |
+| 1 | 0.031    | 76               | 8.8           | 15.9 | 26          | 0.54    | 89                |
+| 2 | 0.064    | 93               | 15            | 34.8 | 24          | 1.4     | 76                |
+| 3 | 0.066    | 93               | 15            | 22.6 | 20          | 1.1     | 88                |
+| 4 | 0.098    | 81               | 14            | 17.7 | 17          | 0.89    | 83                |
+| 5 | 0.21     | 82               | 22            | 15.2 | 9.3         | 1.4     | 73                |
+
+### Attention output dictionaries
+
+| Layer          | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
+|----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
+| 0 | 0.0042   | 85               | 5.2           | 35   | 17          | 0.055   | 96                |
+| 1 | 0.0076   | 76               | 4.9           | 28.4 | 15          | 0.068   | 85                |
+| 2 | 0.022    | 75               | 10            | 59.9 | 10          | 0.19    | 76                |
+| 3 | 0.012    | 78               | 6.5           | 34.2 | 10          | 0.10    | 83                |
+| 4 | 0.0075   | 65               | 3.7           | 21.3 | 14          | 0.029   | 89                |
+| 5 | 0.014    | 76               | 5.3           | 17.7 | 7.6         | 0.060   | 82                |
+
 
 # Extra functionality supported by this repo
+
+**Note:** these features are likely to be depricated in future releases.
 
 We've included support for some experimental features. We briefly investigated them as an alternative approaches to training dictionaries.
 

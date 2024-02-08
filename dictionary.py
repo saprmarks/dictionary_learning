@@ -70,7 +70,7 @@ class AutoEncoder(Dictionary, nn.Module):
             f_ghost = t.exp(f_pre) * ghost_mask.to(f_pre)
             f = nn.ReLU()(f_pre)
 
-            x_ghost = self.decode(f_ghost)
+            x_ghost = self.decoder(f_ghost) # note that this only applies the decoder weight matrix, no bias
             x_hat = self.decode(f)
             if output_features:
                 return x_hat, x_ghost, f
