@@ -118,19 +118,16 @@ class ActivationBuffer:
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
                 
-                tokens = self.tokenized_batch()['input_ids']
-    
-                with self.model.invoke(tokens):
+                with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
                     if self.io == 'in':
-                        hidden_states = self.submodule.input.save()
+                        hidden_states = self.submodule.inputs
                     else:
-                        hidden_states = self.submodule.output.save()
-                hidden_states = hidden_states.value
-                while isinstance(hidden_states, tuple):
-                    hidden_states = hidden_states[0]
-                hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
-    
-                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
+                        hidden_states = self.submodule.output
+                    while type(hidden_states.shape) == tuple:
+                        hidden_states = hidden_states[0]
+                    hidden_states = hidden_states[invoker.input['attention_mask'] != 0]
+                    hidden_states = hidden_states.save()
+                self.activations = t.cat([self.activations, hidden_states.value.to(self.device)], dim=0)
                 self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
     
     def _refresh_in_to_out(self):
@@ -141,22 +138,21 @@ class ActivationBuffer:
         self.activations_out = self.activations_out[~self.read]
 
         while len(self.activations_in) < self.n_ctxs * self.ctx_len:
-                    
-            tokens = self.tokenized_batch()['input_ids']
 
-            with self.model.invoke(tokens):
-                hidden_states_in = self.submodule.input.save()
-                hidden_states_out = self.submodule.output.save()
-            for i, hidden_states in enumerate([hidden_states_in, hidden_states_out]):
-                hidden_states = hidden_states.value
-                while isinstance(hidden_states, tuple):
-                    hidden_states = hidden_states[0]
-                hidden_states = hidden_states[tokens != self.model.tokenizer.pad_token_id]
-                if i == 0:
-                    self.activations_in = t.cat([self.activations_in, hidden_states.to('cpu')], dim=0)
-                else:
-                    self.activations_out = t.cat([self.activations_out, hidden_states.to('cpu')], dim=0)
-            self.read = t.zeros(len(self.activations_in)).bool()
+            with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
+                hidden_states_in = self.submodule.input
+                hidden_states_out = self.submodule.output
+                while type(hidden_states_in.shape) == tuple:
+                    hidden_states_in = hidden_states_in[0]
+                while type(hidden_states_out.shape) == tuple:
+                    hidden_states_out = hidden_states_out[0]
+                hidden_states_in = hidden_states_in[invoker.input['attention_mask'] != 0]
+                hidden_states_out = hidden_states_out[invoker.input['attention_mask'] != 0]
+                hidden_states_in, hidden_states_out = hidden_states_in.save(), hidden_states_out.save()
+                
+            self.activations_in =  t.cat([self.activations_in,  hidden_states_in.value.to(self.device)], dim=0)
+            self.activations_out = t.cat([self.activations_out, hidden_states_out.value.to(self.device)], dim=0)
+            self.read = t.zeros(len(self.activations_in), dtype=t.bool, device=self.device)
 
     def refresh(self):
         """
