@@ -61,13 +61,13 @@ def get_activations(text, model, submodule, dictionary):
     """
     Load activations of `dictionary` on every token of `text`.
     """
-    with model.invoke(text) as invoker:
+    with model.trace(text):
         x = submodule.output
         f = dictionary.encode(x)
         f_saved = f.save()
         y = dictionary.decode(f)
         submodule.output = y
-    return f_saved.value
+    return f_saved
 
 
 def convert_spans(text, spans_lists, tokenizer):

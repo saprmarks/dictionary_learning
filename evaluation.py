@@ -21,69 +21,74 @@ def loss_recovered(
     """
     
     # unmodified logits
-    with model.invoke(text, truncation=True) as invoker:
-        pass
+    with model.trace(text, truncation=True):
+        output = model.output.save()
     try:
-        logits_original = invoker.output.logits
+        logits_original = output.logits
     except:
-        logits_original = invoker.output
+        logits_original = output
     
     # logits when replacing component output with reconstruction by autoencoder
-    with model.invoke(text, truncation=True) as invoker:
+    with model.trace(text, truncation=True):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
-                    submodule.input[0][:] = dictionary(submodule.input[0])
+                    submodule.input[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = dictionary(submodule.input)
             elif io == 'out':
                 if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = dictionary(submodule.output[0])
+                    submodule.output[0][:] = dictionary(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.output)
             elif io == 'in_to_out':
                 if type(submodule.input.shape) == tuple:
-                    submodule.output[0][:] = dictionary(submodule.input[0])
+                    submodule.output[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
+
+        output = model.output.save()
     
     try:
-        logits_reconstructed = invoker.output.logits
+        logits_reconstructed = output.logits
     except:
-        logits_reconstructed = invoker.output
+        logits_reconstructed = output
 
     # logits when zero ablating components
-    with model.invoke(text, truncation=True) as invoker:
+    with model.trace(text, truncation=True) as tracer:
         for submodule in submodules:
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
-                    submodule.input[0][:] = t.zeros_like(submodule.input[0])
+                    submodule.input[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = t.zeros_like(submodule.input)
             elif io == 'out':
                 if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = t.zeros_like(submodule.output[0])
+                    submodule.output[0][:] = t.zeros_like(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.output)
             elif io == 'in_to_out':
                 if type(submodule.input.shape) == tuple:
-                    submodule.output[0][:] = t.zeros_like(submodule.input[0])
+                    submodule.output[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
 
-    try:
-        logits_zero = invoker.output.logits
-    except:
-        logits_zero = invoker.output
+        tracer_input = tracer.input.save()
+        output = model.output.save()
 
     try:
-        tokens = invoker.input['input_ids'].to(logits_original.device)
+        logits_zero = output.logits
     except:
-        tokens = invoker.input['input'].to(logits_original.device)
+        logits_zero = output
+
+    try:
+        tokens = tracer_input['input_ids'].to(logits_original.device)
+    except:
+        tokens = tracer_input['input'].to(logits_original.device)
     
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
