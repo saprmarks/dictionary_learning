@@ -117,6 +117,8 @@ def resample_neurons(deads, activations, ae, optimizer):
     Reset the Adam parameters for the dead neurons to their default values.
     """
     with t.no_grad():
+        if deads.sum() == 0:
+            return
         if isinstance(activations, tuple):
             in_acts, out_acts = activations
         else:
