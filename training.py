@@ -77,7 +77,7 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
         mse_loss = t.sqrt((residual ** 2).mean())
         x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
         ghost_loss = t.nn.MSELoss()(
-            residual, x_ghost
+            residual.detach(), x_ghost
         ).sqrt()
 
     if num_samples_since_activated is not None: # update the number of samples since each neuron was last activated
