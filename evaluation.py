@@ -22,15 +22,18 @@ def loss_recovered(
     """
     
     # unmodified logits
-    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
-        pass
+    with model.trace(text, invoker_args={'truncation': True, 'max_length': max_len}):
+        output = model.output.save()
     try:
-        logits_original = invoker.output.logits
+        logits_original = output.logits
     except:
-        logits_original = invoker.output
+        logits_original = output
     
     # logits when replacing component output with reconstruction by autoencoder
-    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
+    with model.trace(text, invoker_args={'truncation': True, 'max_length': max_len}):
+
+        output = model.output.save()
+
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -51,12 +54,12 @@ def loss_recovered(
                 raise ValueError(f"invalid io: {io}")
     
     try:
-        logits_reconstructed = invoker.output.logits
+        logits_reconstructed = output.logits
     except:
-        logits_reconstructed = invoker.output
+        logits_reconstructed = output
 
     # logits when zero ablating components
-    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
+    with model.trace(text, invoker_args={'truncation': True, 'max_length': max_len}) as tracer:
         for submodule in submodules:
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -77,14 +80,14 @@ def loss_recovered(
                 raise ValueError(f"invalid io: {io}")
 
     try:
-        logits_zero = invoker.output.logits
+        logits_zero = output.logits
     except:
-        logits_zero = invoker.output
+        logits_zero = output
 
     try:
-        tokens = invoker.input['input_ids'].to(logits_original.device)
+        tokens = tracer._invoker.inputs['input_ids'].to(logits_original.device)
     except:
-        tokens = invoker.input['input'].to(logits_original.device)
+        tokens = tracer._invoker.inputs['input'].to(logits_original.device)
     
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:

@@ -25,10 +25,9 @@ def list_decode(model, x):
 def random_feature(model, submodule, autoencoder, buffer,
                    num_examples=10):
     inputs = buffer.tokenized_batch()
-    with model.generate(max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id) as generator:
-        with generator.invoke(inputs['input_ids'], scan=False) as invoker:
-            hidden_states = submodule.output.save()
-    dictionary_activations = autoencoder.encode(hidden_states.value)
+    with model.generate(inputs['input_ids'], max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id, scan=False):
+        hidden_states = submodule.output.save()
+    dictionary_activations = autoencoder.encode(hidden_states)
     num_features = dictionary_activations.shape[2]
     feat_idx = random.randint(0, num_features-1)
     
@@ -63,7 +62,10 @@ def feature_effect(
     Effect of ablating the feature on top k predictions for next token.
     """
     # clean run
-    with model.invoke(input_tokens) as invoker:
+    with model.trace(input_tokens):
+
+        output = model.output.save()
+
         if dictionary is None:
             pass
         elif not add_residual: # run hidden state through autoencoder
@@ -71,11 +73,14 @@ def feature_effect(
                 submodule.output[0][:] = dictionary(submodule.output[0])
             else:
                 submodule.output = dictionary(submodule.output)
-    clean_logits = invoker.output.logits[0, -1, :]
+    clean_logits = output.logits[0, -1, :]
     clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
     # ablated run
-    with model.invoke(input_tokens) as invoker:
+    with model.trace(input_tokens):
+
+        output = model.output.save()
+
         if type(submodule.output.shape) == tuple:
             x = submodule.output[0]
         else:
@@ -100,7 +105,7 @@ def feature_effect(
             else:
                 submodule.output = x
     
-    ablated_logits = invoker.output.logits[0, -1, :]
+    ablated_logits = output.logits[0, -1, :]
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
     diff = clean_logprobs - ablated_logprobs
 
@@ -118,7 +123,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
         
     # are we working with residuals?
     is_resid = False
-    with model.invoke("dummy text") as invoker:
+    with model.trace("dummy text"):
         if type(submodule.output.shape) == tuple:
             is_resid = True
     
@@ -128,10 +133,9 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
         dimensions = submodule.output[0].shape[-1] if is_resid else submodule.output.shape[-1]
     
     inputs = buffer.tokenized_batch().to("cuda")
-    with model.generate(max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id) as generator:
-        with generator.invoke(inputs['input_ids'], scan=False) as invoker:
-            hidden_states = submodule.output.save()
-    hidden_states = hidden_states.value[0] if is_resid else hidden_states.value
+    with model.generate(inputs['input_ids'], max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id, scan=False):
+        hidden_states = submodule.output.save()
+    hidden_states = hidden_states[0] if is_resid else hidden_states
     if dictionary is not None:
         activations = dictionary.encode(hidden_states)
     else:

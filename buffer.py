@@ -118,16 +118,16 @@ class ActivationBuffer:
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
                 
-                with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
+                with self.model.trace(self.text_batch(), invoker_args={'truncation': True, 'max_length': self.ctx_len}) as tracer:
                     if self.io == 'in':
-                        hidden_states = self.submodule.inputs
+                        hidden_states = self.submodule.input
                     else:
                         hidden_states = self.submodule.output
                     while type(hidden_states.shape) == tuple:
                         hidden_states = hidden_states[0]
-                    hidden_states = hidden_states[invoker.input['attention_mask'] != 0]
+                    hidden_states = hidden_states[tracer._invoker.inputs['attention_mask'] != 0]
                     hidden_states = hidden_states.save()
-                self.activations = t.cat([self.activations, hidden_states.value.to(self.device)], dim=0)
+                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
                 self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
     
     def _refresh_in_to_out(self):
@@ -139,19 +139,19 @@ class ActivationBuffer:
 
         while len(self.activations_in) < self.n_ctxs * self.ctx_len:
 
-            with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
+            with self.model.trace(self.text_batch(), invoker_args={'truncation': True, 'max_length': self.ctx_len}) as tracer:
                 hidden_states_in = self.submodule.input
                 hidden_states_out = self.submodule.output
                 while type(hidden_states_in.shape) == tuple:
                     hidden_states_in = hidden_states_in[0]
                 while type(hidden_states_out.shape) == tuple:
                     hidden_states_out = hidden_states_out[0]
-                hidden_states_in = hidden_states_in[invoker.input['attention_mask'] != 0]
-                hidden_states_out = hidden_states_out[invoker.input['attention_mask'] != 0]
+                hidden_states_in = hidden_states_in[tracer._invoker.inputs['attention_mask'] != 0]
+                hidden_states_out = hidden_states_out[tracer._invoker.inputs['attention_mask'] != 0]
                 hidden_states_in, hidden_states_out = hidden_states_in.save(), hidden_states_out.save()
                 
-            self.activations_in =  t.cat([self.activations_in,  hidden_states_in.value.to(self.device)], dim=0)
-            self.activations_out = t.cat([self.activations_out, hidden_states_out.value.to(self.device)], dim=0)
+            self.activations_in =  t.cat([self.activations_in,  hidden_states_in.to(self.device)], dim=0)
+            self.activations_out = t.cat([self.activations_out, hidden_states_out.to(self.device)], dim=0)
             self.read = t.zeros(len(self.activations_in), dtype=t.bool, device=self.device)
 
     def refresh(self):
