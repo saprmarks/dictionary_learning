@@ -1,62 +1,72 @@
-import zstandard as zstd
+import io
 import json
 import os
-import io
 import random
-from tqdm import tqdm
-from nnsight import LanguageModel
-from dictionary_learning.buffer import ActivationBuffer
-from dictionary_learning.dictionary import AutoEncoder
-from dictionary_learning.training import trainSAE
 from collections import defaultdict
+
+import torch as t
+import zstandard as zstd
 from circuitsvis.activations import text_neuron_activations
 from circuitsvis.topk_tokens import topk_tokens
 from datasets import load_dataset
 from einops import rearrange
-import torch as t
+from tqdm import tqdm
+
+from dictionary_learning.buffer import ActivationBuffer
+from dictionary_learning.dictionary import AutoEncoder
+from dictionary_learning.training import trainSAE
+from nnsight import LanguageModel
+
 
 def list_decode(model, x):
     if isinstance(x, int):
         return model.tokenizer.decode(x)
     else:
         return [list_decode(model, y) for y in x]
-    
 
-def random_feature(model, submodule, autoencoder, buffer,
-                   num_examples=10):
+
+def random_feature(model, submodule, autoencoder, buffer, num_examples=10):
     inputs = buffer.tokenized_batch()
-    with model.generate(inputs['input_ids'], max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id, scan=False):
+    with model.generate(
+        inputs["input_ids"],
+        max_new_tokens=1,
+        pad_token_id=model.tokenizer.pad_token_id,
+        scan=False,
+    ):
         hidden_states = submodule.output.save()
     dictionary_activations = autoencoder.encode(hidden_states)
     num_features = dictionary_activations.shape[2]
-    feat_idx = random.randint(0, num_features-1)
-    
-    flattened_acts = rearrange(dictionary_activations, 'b n d -> (b n) d')
+    feat_idx = random.randint(0, num_features - 1)
+
+    flattened_acts = rearrange(dictionary_activations, "b n d -> (b n) d")
     acts = dictionary_activations[:, :, feat_idx].cpu()
-    flattened_acts = rearrange(acts, 'b l -> (b l)')
+    flattened_acts = rearrange(acts, "b l -> (b l)")
     top_indices = t.argsort(flattened_acts, dim=0, descending=True)[:num_examples]
     batch_indices = top_indices // acts.shape[1]
     token_indices = top_indices % acts.shape[1]
 
     tokens = [
-        inputs['input_ids'][batch_idx, :token_idx+1].tolist() for batch_idx, token_idx in zip(batch_indices, token_indices)
+        inputs["input_ids"][batch_idx, : token_idx + 1].tolist()
+        for batch_idx, token_idx in zip(batch_indices, token_indices)
     ]
     tokens = list_decode(model, tokens)
     activations = [
-        acts[batch_idx, :token_id+1, None, None] for batch_idx, token_id in zip(batch_indices, token_indices)
+        acts[batch_idx, : token_id + 1, None, None]
+        for batch_idx, token_id in zip(batch_indices, token_indices)
     ]
 
     return (feat_idx, tokens, activations)
 
+
 def feature_effect(
-        model,
-        submodule,
-        dictionary,
-        feature,
-        input_tokens,
-        add_residual=True, # whether to compensate for dictionary reconstruction error by adding residual
-        k=10,
-        largest=True,
+    model: LanguageModel,
+    submodule,
+    dictionary,
+    feature,
+    input_tokens,
+    add_residual=True,  # whether to compensate for dictionary reconstruction error by adding residual
+    k=10,
+    largest=True,
 ):
     """
     Effect of ablating the feature on top k predictions for next token.
@@ -68,7 +78,7 @@ def feature_effect(
 
         if dictionary is None:
             pass
-        elif not add_residual: # run hidden state through autoencoder
+        elif not add_residual:  # run hidden state through autoencoder
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:] = dictionary(submodule.output[0])
             else:
@@ -77,7 +87,7 @@ def feature_effect(
     clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
     # ablated run
-    with model.trace(input_tokens):
+    with t.no_grad(), model.trace(input_tokens):
 
         output = model.output.save()
 
@@ -92,19 +102,19 @@ def feature_effect(
             else:
                 submodule.output[0, -1, feature] = 0
         else:
-            f = dictionary.encode(x)   
+            f = dictionary.encode(x)
             f[0, -1, feature] = 0
             if not add_residual:
                 x = dictionary.decode(f)
             else:
                 residual = dictionary(x) - x
                 x = dictionary.decode(f) - residual
-            
+
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:] = x
             else:
                 submodule.output = x
-    
+
     ablated_logits = output.logits[0, -1, :]
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
     diff = clean_logprobs - ablated_logprobs
@@ -113,27 +123,35 @@ def feature_effect(
     return top_tokens, top_probs
 
 
-def examine_dimension(model, submodule, buffer, dictionary=None,
-                      dim_idx=None, k=30):
+def examine_dimension(
+    model: LanguageModel, submodule, buffer, dictionary=None, dim_idx=None, k=30
+):
     def _list_decode(x):
         if isinstance(x, int):
             return model.tokenizer.decode(x)
         else:
             return [_list_decode(y) for y in x]
-        
+
     # are we working with residuals?
     is_resid = False
-    with model.trace("dummy text"):
+    with t.no_grad(), model.trace("dummy text"):
         if type(submodule.output.shape) == tuple:
             is_resid = True
-    
+
     if dictionary is not None:
         dimensions = dictionary.encoder.out_features
     else:
-        dimensions = submodule.output[0].shape[-1] if is_resid else submodule.output.shape[-1]
-    
+        dimensions = (
+            submodule.output[0].shape[-1] if is_resid else submodule.output.shape[-1]
+        )
+
     inputs = buffer.tokenized_batch().to("cuda")
-    with model.generate(inputs['input_ids'], max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id, scan=False):
+    with model.generate(
+        inputs["input_ids"],
+        max_new_tokens=1,
+        pad_token_id=model.tokenizer.pad_token_id,
+        scan=False,
+    ):
         hidden_states = submodule.output.save()
     hidden_states = hidden_states[0] if is_resid else hidden_states
     if dictionary is not None:
@@ -141,26 +159,28 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
     else:
         activations = hidden_states
 
-    flattened_acts = rearrange(activations, 'b n d -> (b n) d')
-    freqs = (flattened_acts !=0).sum(dim=0) / flattened_acts.shape[0]
+    flattened_acts = rearrange(activations, "b n d -> (b n) d")
+    freqs = (flattened_acts != 0).sum(dim=0) / flattened_acts.shape[0]
 
     k = k
     if dim_idx is not None:
         feat = dim_idx
     else:
-        feat = random.randint(0, dimensions-1)
+        feat = random.randint(0, dimensions - 1)
     acts = activations[:, :, feat].cpu()
-    flattened_acts = rearrange(acts, 'b l -> (b l)')
+    flattened_acts = rearrange(acts, "b l -> (b l)")
     topk_indices = t.argsort(flattened_acts, dim=0, descending=True)[:k]
     batch_indices = topk_indices // acts.shape[1]
     token_indices = topk_indices % acts.shape[1]
-    
+
     tokens = [
-        inputs['input_ids'][batch_idx, :token_idx+1].tolist() for batch_idx, token_idx in zip(batch_indices, token_indices)
+        inputs["input_ids"][batch_idx, : token_idx + 1].tolist()
+        for batch_idx, token_idx in zip(batch_indices, token_indices)
     ]
     tokens = _list_decode(tokens)
     activations = [
-        acts[batch_idx, :token_id+1, None, None] for batch_idx, token_id in zip(batch_indices, token_indices)
+        acts[batch_idx, : token_id + 1, None, None]
+        for batch_idx, token_id in zip(batch_indices, token_indices)
     ]
 
     token_acts_sums = defaultdict(float)
@@ -174,7 +194,12 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
             token_acts_counts[token] += 1
     for token in token_acts_sums:
         token_mean_acts[token] = token_acts_sums[token] / token_acts_counts[token]
-    token_mean_acts = {k: v for k, v in sorted(token_mean_acts.items(), key=lambda item: item[1], reverse=True)}
+    token_mean_acts = {
+        k: v
+        for k, v in sorted(
+            token_mean_acts.items(), key=lambda item: item[1], reverse=True
+        )
+    }
     top_tokens = []
     i = 0
     for token in token_mean_acts:
@@ -187,12 +212,16 @@ def examine_dimension(model, submodule, buffer, dictionary=None,
 
     # this isn't working as expected, for some reason
     top_affected = []
-    affected_tokens, prob_change = feature_effect(model, submodule, dictionary, dim_idx, inputs)
+    affected_tokens, prob_change = feature_effect(
+        model, submodule, dictionary, dim_idx, inputs
+    )
     for idx, tok_idx in enumerate(affected_tokens):
         token = model.tokenizer._convert_id_to_token(tok_idx)
         prob = prob_change[idx].item()
         top_affected.append((token, prob))
 
-    return {"top_contexts": top_contexts,
-            "top_tokens": top_tokens,
-            "top_affected": top_affected}
+    return {
+        "top_contexts": top_contexts,
+        "top_tokens": top_tokens,
+        "top_affected": top_affected,
+    }
