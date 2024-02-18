@@ -1,18 +1,20 @@
-from dictionary import AutoEncoder
-from buffer import ActivationBuffer
-
 import os
-import torch as t
-from tqdm import tqdm
-from collections import defaultdict
-from datasets import load_dataset
 from argparse import ArgumentParser
+from collections import defaultdict
+
+import torch as t
+from buffer import ActivationBuffer
+from datasets import load_dataset
+from dictionary import AutoEncoder
+from tqdm import tqdm
+
 from nnsight import LanguageModel
+
 
 def load_submodule(model, submodule_str):
     if "." not in submodule_str:
         return getattr(model, submodule_str)
-    
+
     submodules = submodule_str.split(".")
     curr_module = None
     for module in submodules:
@@ -52,16 +54,18 @@ def load_word_labels(dataset):
             span2_end = None
 
         for label in labels:
-            word_labels[text][label].append([(span1_start, span1_end), (span2_start, span2_end)])
-    
+            word_labels[text][label].append(
+                [(span1_start, span1_end), (span2_start, span2_end)]
+            )
+
     return word_labels
 
 
-def get_activations(text, model, submodule, dictionary):
+def get_activations(text, model: LanguageModel, submodule, dictionary):
     """
     Load activations of `dictionary` on every token of `text`.
     """
-    with model.invoke(text) as invoker:
+    with t.no_grad(), model.trace(text):
         x = submodule.output
         f = dictionary.encode(x)
         f_saved = f.save()
@@ -89,12 +93,12 @@ def convert_spans(text, spans_lists, tokenizer):
     for token_idx, token in enumerate(tokenized_text):
         if token.startswith("Ġ"):
             # Add previous word to dictionary
-            word_idx_to_tokenized_span[word_idx] = (word_start, token_idx-1)
+            word_idx_to_tokenized_span[word_idx] = (word_start, token_idx - 1)
             # Start next word
             word_idx += 1
             word_start = token_idx
     # Add final word to list
-    word_idx_to_tokenized_span[word_idx] = (word_start, len(tokenized_text)-1)
+    word_idx_to_tokenized_span[word_idx] = (word_start, len(tokenized_text) - 1)
 
     posttok_spans = {}
     for label in spans_lists:
@@ -105,22 +109,30 @@ def convert_spans(text, spans_lists, tokenizer):
             span_2 = list(span_2)
             span_1[0] = word_idx_to_tokenized_span[span_1[0]][0]
             span_1[1] = word_idx_to_tokenized_span[span_1[1]][1]
-            posttok_spans[label][span_1[0]:span_1[1]+1] = 1.0
+            posttok_spans[label][span_1[0] : span_1[1] + 1] = 1.0
             if span_2[0] is not None:
                 span_2[0] = word_idx_to_tokenized_span[span_2[0]][0]
                 span_2[1] = word_idx_to_tokenized_span[span_2[1]][1]
-                posttok_spans[label][span_2[0]:span_2[1]+1] = 1.0
+                posttok_spans[label][span_2[0] : span_2[1] + 1] = 1.0
 
     return posttok_spans
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--dictionary", type=str, default="/share/projects/dictionary_circuits/autoencoders/pythia-70m-deduped/mlp_out_layer4/1_32768/ae.pt")
-    parser.add_argument("--submodule", type=str, default="model.gpt_neox.layers.4.mlp.dense_4h_to_h")
+    parser.add_argument(
+        "--dictionary",
+        type=str,
+        default="/share/projects/dictionary_circuits/autoencoders/pythia-70m-deduped/mlp_out_layer4/1_32768/ae.pt",
+    )
+    parser.add_argument(
+        "--submodule", type=str, default="model.gpt_neox.layers.4.mlp.dense_4h_to_h"
+    )
     parser.add_argument("--layer_num", type=int, default=4)
     parser.add_argument("--model_name", type=str, default="EleutherAI/pythia-70m")
-    parser.add_argument("--dataset", "-d", type=str, default="/home/aaron/edge_probe/ewt-pos.json")
+    parser.add_argument(
+        "--dataset", "-d", type=str, default="/home/aaron/edge_probe/ewt-pos.json"
+    )
     parser.add_argument("--num_examples", "-n", type=int, default=None)
     args = parser.parse_args()
 
@@ -129,9 +141,13 @@ if __name__ == "__main__":
     submodule_width = submodule.out_features
     autoencoder_size = 32768
     if "_sz" in args.dictionary:
-        autoencoder_size = int(args.dictionary.split("_sz")[1].split("_")[0].split(".")[0])
+        autoencoder_size = int(
+            args.dictionary.split("_sz")[1].split("_")[0].split(".")[0]
+        )
     elif "_dict" in args.dictionary:
-        autoencoder_size = int(args.dictionary.split("_dict")[1].split("_")[0].split(".")[0])
+        autoencoder_size = int(
+            args.dictionary.split("_dict")[1].split("_")[0].split(".")[0]
+        )
     elif "/0_" in args.dictionary:
         autoencoder_size = int(args.dictionary.split("0_")[1].split("/")[0])
     elif "/1_" in args.dictionary:
@@ -142,7 +158,9 @@ if __name__ == "__main__":
     train_examples = dataset["train"][0]
     word_labels = load_word_labels(train_examples)
     if args.num_examples and args.num_examples < len(word_labels.keys()):
-        word_labels = {key:value for key,value in list(word_labels.items())[:args.num_examples]}
+        word_labels = {
+            key: value for key, value in list(word_labels.items())[: args.num_examples]
+        }
     num_texts = len(word_labels.keys())
 
     precisions = {}
@@ -154,8 +172,10 @@ if __name__ == "__main__":
         feature_activations = get_activations(text, model, submodule, dictionary)
         # collapse into binary variable: 1 if greater than epsilon, 0 otherwise
         feature_activates = t.where(feature_activations > 0.01, 1.0, 0.0)
-        feature_activates = feature_activates[0].T.int()  # shape: [num_features x num_tokens]
-        
+        feature_activates = feature_activates[
+            0
+        ].T.int()  # shape: [num_features x num_tokens]
+
         # dictionary of Tensors where each token is labeled
         labeled_tokens = convert_spans(text, word_labels[text], model.tokenizer)
 
@@ -169,11 +189,17 @@ if __name__ == "__main__":
                     continue
                 labeled_tokens[label] = labeled_tokens[label].int()
                 TP = t.sum(feature_activates[feature_idx] & labeled_tokens[label])
-                FP = t.sum(feature_activates[feature_idx] & (labeled_tokens[label] == False).int())
-                FN = t.sum((feature_activates[feature_idx] == False).int() & labeled_tokens[label])
+                FP = t.sum(
+                    feature_activates[feature_idx]
+                    & (labeled_tokens[label] == False).int()
+                )
+                FN = t.sum(
+                    (feature_activates[feature_idx] == False).int()
+                    & labeled_tokens[label]
+                )
                 precisions[label][feature_idx] += TP / (TP + FP)
                 recalls[label][feature_idx] += TP / (TP + FN)
-    
+
     for label in precisions:
         prec = precisions[label].div(num_texts)
         recall = recalls[label].div(num_texts)
