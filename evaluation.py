@@ -12,6 +12,7 @@ def loss_recovered(
         model, # an nnsight LanguageModel
         submodules, # submodules of model
         dictionaries, # dictionaries for submodules
+        max_len=None, # max context length for loss recovered
         io='out', # can be 'in', 'out', or 'in_to_out'
         pct=False # return pct recovered; if False, return losses
 ):
@@ -21,7 +22,7 @@ def loss_recovered(
     """
     
     # unmodified logits
-    with model.invoke(text, truncation=True) as invoker:
+    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
         pass
     try:
         logits_original = invoker.output.logits
@@ -29,7 +30,7 @@ def loss_recovered(
         logits_original = invoker.output
     
     # logits when replacing component output with reconstruction by autoencoder
-    with model.invoke(text, truncation=True) as invoker:
+    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -55,7 +56,7 @@ def loss_recovered(
         logits_reconstructed = invoker.output
 
     # logits when zero ablating components
-    with model.invoke(text, truncation=True) as invoker:
+    with model.invoke(text, truncation=True, max_length=max_len) as invoker:
         for submodule in submodules:
             if io == 'in':
                 if type(submodule.input.shape) == tuple:
@@ -103,6 +104,7 @@ def evaluate(
         submodule, # a submodule of model
         dictionary, # a dictionary
         activations, # an ActivationBuffer
+        max_len=None, # max context length for loss recovered
         batch_size=None, # batch size for loss recovered
         entropy=False, # whether to use entropy regularization
         hist_save_path=None, # path for saving histograms
@@ -118,7 +120,7 @@ def evaluate(
 
         # compute reconstruction (L2) loss and sparsity loss
         mse_loss, sparsity_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
-        out['mse_loss'] = mse_loss.item() ** 2
+        out['mse_loss'] = mse_loss.item() ** 2 #/ acts.norm(dim=-1).mean().item() ** 2
         out['sparsity_loss'] = sparsity_loss.item()
 
         # compute variance explained        
@@ -145,7 +147,7 @@ def evaluate(
         
         # compute loss recovered
         loss_original, loss_reconstructed, loss_zero = \
-            loss_recovered(activations.text_batch(batch_size=batch_size), model, [submodule], [dictionary], io=io, pct=False)
+            loss_recovered(activations.text_batch(batch_size=batch_size), model, [submodule], [dictionary], max_len=max_len, io=io, pct=False)
         out['loss_original'] = loss_original
         out['loss_reconstructed'] = loss_reconstructed
         out['loss_zero'] = loss_zero
