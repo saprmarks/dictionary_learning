@@ -67,14 +67,12 @@ def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=Fals
 
     if not ghost_grads: # if we're not doing ghost grads
         x_hat, f = ae(in_acts, output_features=True)
-        mse_loss = t.nn.MSELoss()(
-            out_acts, x_hat
-        ).sqrt()
+        mse_loss = t.linalg.norm(out_acts - x_hat, dim=-1).mean()
     
     else: # if we're doing ghost grads        
         x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
         residual = out_acts - x_hat
-        mse_loss = t.sqrt((residual ** 2).mean())
+        mse_loss = t.linalg.norm(residual, dim=-1).mean()
         x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
         ghost_loss = t.nn.MSELoss()(
             residual.detach(), x_ghost
@@ -129,14 +127,15 @@ def resample_neurons(deads, activations, ae, optimizer):
         # compute the loss for each activation vector
         losses = (out_acts - ae(in_acts)).norm(dim=-1)
 
-        # resample decoder vectors for dead neurons
-        indices = t.multinomial(losses, num_samples=deads.sum(), replacement=True)
-        ae.decoder.weight[:,deads] = out_acts[indices].T
-        ae.decoder.weight /= ae.decoder.weight.norm(dim=0, keepdim=True)
+        # sample inputs to create encoder/decoder weights from
+        n_resample = min([deads.sum(), losses.shape[0]])
+        deads = deads[:n_resample] # make sure that we can sample without replacement
+        indices = t.multinomial(losses, num_samples=n_resample, replacement=False)
+        sampled_vecs = out_acts[indices]
 
-        # resample encoder vectors for dead neurons
-        ae.encoder.weight[deads] = ae.encoder.weight[~deads].mean(dim=0) * 0.2
-
+        alive_norm = ae.encoder.weight[~deads].norm(dim=-1).mean()
+        ae.encoder.weight[deads] = sampled_vecs * alive_norm * 0.2
+        ae.decoder.weight[:,deads] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
         # reset bias vectors for dead neurons
         ae.encoder.bias[deads] = 0.
 
