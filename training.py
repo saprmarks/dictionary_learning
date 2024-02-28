@@ -214,12 +214,12 @@ def trainSAE(
             # deal with resampling neurons
             if resample_steps is not None and step % resample_steps == 0:
                 # resample neurons who've been dead for the last resample_steps / 2 steps
-                resample_neurons(num_samples_since_activated > resample_steps / 2, acts, ae, optimizer)
+                resample_neurons(num_samples_since_activated > resample_steps / 2, act, ae, optimizer)
 
             # logging
             if log_steps is not None and step % log_steps == 0:
                 with t.no_grad():
-                    losses = sae_loss(acts, ae, sparsity_penalty, entropy, separate=True, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
+                    losses = sae_loss(act, ae, sparsity_penalty, entropy, separate=True, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
                     if ghost_threshold is None:
                         mse_loss, sparsity_loss = losses
                         print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
