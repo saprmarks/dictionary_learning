@@ -15,6 +15,9 @@ from datasets import load_dataset
 from einops import rearrange
 import torch as t
 from collections import namedtuple
+import umap
+import pandas as pd
+import plotly.express as px
 
 def list_decode(model, x):
     if isinstance(x, int):
@@ -166,3 +169,38 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
     top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]
 
     return namedtuple('featureProfile', ['top_contexts', 'top_tokens', 'top_affected'])(top_contexts, top_tokens, top_affected)
+
+def feature_umap(
+        dictionary,
+        weight='decoder', # 'encoder' or 'decoder'
+        # UMAP parameters
+        n_neighbors=15,
+        metric='cosine',
+        min_dist=0.05,
+        n_components=2, # dimension of the UMAP embedding
+        feat_idxs=None, # if not none, indicate the feature with a red dot
+):
+    """
+    Fit a UMAP embedding of the dictionary features and return a plotly plot of the result."""
+    if weight == 'encoder':
+        df = pd.DataFrame(dictionary.encoder.weight.cpu().detach().numpy())
+    else:
+        df = pd.DataFrame(dictionary.decoder.weight.T.cpu().detach().numpy())
+    reducer = umap.UMAP(
+        n_neighbors=n_neighbors,
+        metric=metric,
+        min_dist=min_dist,
+        n_components=n_components,
+    )
+    embedding = reducer.fit_transform(df)
+    if feat_idxs is None:
+        colors = None
+    if isinstance(feat_idxs, int):
+        feat_idxs = [feat_idxs]
+    else:
+        colors = ['blue' if i not in feat_idxs else 'red' for i in range(embedding.shape[0])]
+    if n_components == 2:
+        return px.scatter(x=embedding[:, 0], y=embedding[:, 1], hover_name=df.index, color=colors)
+    if n_components == 3:
+        return px.scatter_3d(x=embedding[:, 0], y=embedding[:, 1], z=embedding[:, 2], hover_name=df.index, color=colors)
+    raise ValueError("n_components must be 2 or 3")
