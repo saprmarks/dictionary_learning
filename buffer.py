@@ -24,15 +24,15 @@ class ActivationBuffer:
                  ):
         
         # dictionary of activations
-        self.activations = {}
-        for submodule in submodules:
+        self.activations = [None for _ in submodules]
+        for i, submodule in enumerate(submodules):
             if io == 'in':
                 if in_feats is None:
                     try:
                         in_feats = submodule.in_features
                     except:
                         raise ValueError("in_feats cannot be inferred and must be specified directly")
-                self.activations[submodule] = t.empty(0, in_feats, device=device)
+                self.activations[i] = t.empty(0, in_feats, device=device)
 
             elif io == 'out':
                 if out_feats is None:
@@ -40,7 +40,7 @@ class ActivationBuffer:
                         out_feats = submodule.out_features
                     except:
                         raise ValueError("out_feats cannot be inferred and must be specified directly")
-                self.activations[submodule] = t.empty(0, out_feats, device=device)
+                self.activations[i] = t.empty(0, out_feats, device=device)
             elif io == 'in_to_out':
                 raise ValueError("Support for in_to_out is depricated")
         self.read = t.zeros(0, dtype=t.bool, device=device)
@@ -71,9 +71,7 @@ class ActivationBuffer:
         unreads = (~self.read).nonzero().squeeze()
         idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
         self.read[idxs] = True
-        return {
-            submodule : activations[idxs] for submodule, activations in self.activations.items()
-        }
+        return [self.activations[i][idxs] for i in range(len(self.activations))]
     
     def text_batch(self, batch_size=None):
         """
@@ -102,34 +100,34 @@ class ActivationBuffer:
         )
 
     def refresh(self):
-        for submodule, activations in self.activations.items():
-            self.activations[submodule] = activations[~self.read].contiguous()
+        for i, activations in enumerate(self.activations):
+            self.activations[i] = activations[~self.read].contiguous()
         self._n_activations = (~self.read).sum().item()
 
         while self._n_activations < self.n_ctxs * self.ctx_len:
                 
                 with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
-                    hidden_states = {}
-                    for submodule in self.submodules:
+                    hidden_states = [None for _ in self.submodules]
+                    for i, submodule in enumerate(self.submodules):
                         if self.io == 'in':
                             x = submodule.input
                         else:
                             x = submodule.output
                         if (type(x.shape) == tuple):
                             x = x[0]
-                        hidden_states[submodule] = x.save()
+                        hidden_states[i] = x.save()
 
                 attn_mask = invoker.input['attention_mask']
                 
                 self._n_activations += (attn_mask != 0).sum().item()     
 
-                for submodule, activations in self.activations.items():
-                    self.activations[submodule] = t.cat((
+                for i, activations in enumerate(self.activations):
+                    self.activations[i] = t.cat((
                         activations,
-                        hidden_states[submodule].value[attn_mask != 0].to(activations.device)),
+                        hidden_states[i].value[attn_mask != 0].to(activations.device)),
                         dim=0
                     )
-                    assert len(self.activations[submodule]) == self._n_activations
+                    assert len(self.activations[i]) == self._n_activations
 
         self.read = t.zeros(self._n_activations, dtype=t.bool, device=self.device)
 
