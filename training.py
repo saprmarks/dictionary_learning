@@ -150,13 +150,13 @@ def trainSAE(
         buffer, # an ActivationBuffer
         activation_dims, # dictionary of activation dimensions for each submodule (or a single int)
         dictionary_sizes, # dictionary of dictionary sizes for each submodule (or a single int)
-        lr,
+        lrs, # dictionary of learning rates for each submodule (or a single float)
         sparsity_penalty,
         entropy=False,
         steps=None, # if None, train until activations are exhausted
         warmup_steps=1000, # linearly increase the learning rate for this many steps
         resample_steps=None, # how often to resample dead neurons
-        ghost_threshold=None, # how many steps a neuron has to be dead for it to turn into a ghost
+        ghost_thresholds=None, # dictionary of how many steps a neuron has to be dead for it to turn into a ghost (or a single int)
         save_steps=None, # how often to save checkpoints
         save_dirs=None, # dictionary of directories to save checkpoints to
         checkpoint_offset=0, # if resuming training, the step number of the last checkpoint
@@ -170,6 +170,10 @@ def trainSAE(
         activation_dims = {submodule: activation_dims for submodule in buffer.submodules}
     if isinstance(dictionary_sizes, int):
         dictionary_sizes = {submodule: dictionary_sizes for submodule in buffer.submodules}
+    if isinstance(lrs, float):
+        lrs = {submodule: lrs for submodule in buffer.submodules}
+    if isinstance(ghost_thresholds, int):
+        ghost_thresholds = {submodule: ghost_thresholds for submodule in buffer.submodules}
 
     aes = {}
     num_samples_since_activateds = {}
@@ -182,7 +186,7 @@ def trainSAE(
 
     # set up optimizer and scheduler
     optimizers = {
-        submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr) for submodule, ae in aes.items()
+        submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lrs[submodule]) for submodule, ae in aes.items()
     }
     if resample_steps is None:
         def warmup_fn(step):
@@ -205,7 +209,7 @@ def trainSAE(
             ae, num_samples_since_activated, optimizer, scheduler \
                 = aes[submodule], num_samples_since_activateds[submodule], optimizers[submodule], schedulers[submodule]
             optimizer.zero_grad()
-            loss = sae_loss(act, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
+            loss = sae_loss(act, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_thresholds[submodule])
             loss.backward()
             optimizer.step()
             scheduler.step()
