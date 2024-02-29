@@ -148,17 +148,17 @@ def resample_neurons(deads, activations, ae, optimizer):
 
 def trainSAE(
         buffer, # an ActivationBuffer
-        activation_dims, # dictionary of activation dimensions for each submodule (or a single int)
-        dictionary_sizes, # dictionary of dictionary sizes for each submodule (or a single int)
-        lr,
+        activation_dims, # list of activation dimensions for each submodule (or a single int)
+        dictionary_sizes, # list of dictionary sizes for each submodule (or a single int)
+        lrs, # list of learning rates for each submodule (or a single float)
         sparsity_penalty,
         entropy=False,
         steps=None, # if None, train until activations are exhausted
         warmup_steps=1000, # linearly increase the learning rate for this many steps
         resample_steps=None, # how often to resample dead neurons
-        ghost_threshold=None, # how many steps a neuron has to be dead for it to turn into a ghost
+        ghost_thresholds=None, # list of how many steps a neuron has to be dead for it to turn into a ghost (or a single int)
         save_steps=None, # how often to save checkpoints
-        save_dirs=None, # dictionary of directories to save checkpoints to
+        save_dirs=None, # list of directories to save checkpoints to
         checkpoint_offset=0, # if resuming training, the step number of the last checkpoint
         load_dirs=None, # if initializing from a pretrained dictionary, directories to load from
         log_steps=None, # how often to print statistics
@@ -167,23 +167,25 @@ def trainSAE(
     Train and return sparse autoencoders for each submodule in the buffer.
     """
     if isinstance(activation_dims, int):
-        activation_dims = {submodule: activation_dims for submodule in buffer.submodules}
+        activation_dims = [activation_dims for submodule in buffer.submodules]
     if isinstance(dictionary_sizes, int):
-        dictionary_sizes = {submodule: dictionary_sizes for submodule in buffer.submodules}
+        dictionary_sizes = [dictionary_sizes for submodule in buffer.submodules]
+    if isinstance(lrs, float):
+        lrs = [lrs for submodule in buffer.submodules]
+    if isinstance(ghost_thresholds, int):
+        ghost_thresholds = [ghost_thresholds for submodule in buffer.submodules]
 
-    aes = {}
-    num_samples_since_activateds = {}
-    for submodule in buffer.submodules:
-        ae = AutoEncoder(activation_dims[submodule], dictionary_sizes[submodule]).to(device)
+    aes = [None for submodule in buffer.submodules]
+    num_samples_since_activateds = [None for submodule in buffer.submodules]
+    for i, submodule in enumerate(buffer.submodules):
+        ae = AutoEncoder(activation_dims[i], dictionary_sizes[i]).to(device)
         if load_dirs is not None:
-            ae.load_state_dict(t.load(os.path.join(load_dirs[submodule])))
-        aes[submodule] = ae
-        num_samples_since_activateds[submodule] = t.zeros(dictionary_sizes[submodule], dtype=int, device=device)
+            ae.load_state_dict(t.load(os.path.join(load_dirs[i])))
+        aes[i] = ae
+        num_samples_since_activateds[i] = t.zeros(dictionary_sizes[i], dtype=int, device=device)
 
     # set up optimizer and scheduler
-    optimizers = {
-        submodule: ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr) for submodule, ae in aes.items()
-    }
+    optimizers = [ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lrs[i]) for i, ae in enumerate(aes)]
     if resample_steps is None:
         def warmup_fn(step):
             return min(step / warmup_steps, 1.)
@@ -191,21 +193,19 @@ def trainSAE(
         def warmup_fn(step):
             return min((step % resample_steps) / warmup_steps, 1.)
 
-    schedulers = {
-        submodule: t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn) for submodule, optimizer in optimizers.items()
-    }
+    schedulers = [t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn) for optimizer in optimizers]
 
     for step, acts in enumerate(tqdm(buffer, total=steps)):
         real_step = step + checkpoint_offset
         if steps is not None and real_step >= steps:
             break
 
-        for submodule, act in acts.items():
+        for i, act in enumerate(acts):
             act = act.to(device)
             ae, num_samples_since_activated, optimizer, scheduler \
-                = aes[submodule], num_samples_since_activateds[submodule], optimizers[submodule], schedulers[submodule]
+                = aes[i], num_samples_since_activateds[i], optimizers[i], schedulers[i]
             optimizer.zero_grad()
-            loss = sae_loss(act, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
+            loss = sae_loss(act, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_thresholds[i])
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -218,8 +218,8 @@ def trainSAE(
             # logging
             if log_steps is not None and step % log_steps == 0:
                 with t.no_grad():
-                    losses = sae_loss(act, ae, sparsity_penalty, entropy, separate=True, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
-                    if ghost_threshold is None:
+                    losses = sae_loss(act, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_thresholds[i], separate=True)
+                    if ghost_thresholds is None:
                         mse_loss, sparsity_loss = losses
                         print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
                     else:
@@ -234,11 +234,11 @@ def trainSAE(
 
             # saving
             if save_steps is not None and save_dirs is not None and real_step % save_steps == 0:
-                if not os.path.exists(os.path.join(save_dirs[submodule], "checkpoints")):
-                    os.mkdir(os.path.join(save_dirs[submodule], "checkpoints"))
+                if not os.path.exists(os.path.join(save_dirs[i], "checkpoints")):
+                    os.mkdir(os.path.join(save_dirs[i], "checkpoints"))
                 t.save(
                     ae.state_dict(), 
-                    os.path.join(save_dirs[submodule], "checkpoints", f"ae_{real_step}.pt")
+                    os.path.join(save_dirs[i], "checkpoints", f"ae_{real_step}.pt")
                     )
 
     return aes
