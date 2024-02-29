@@ -1,5 +1,8 @@
 import torch as t
 import zstandard as zstd
+import glob
+from datetime import datetime
+import os
 import json
 import io
 from nnsight import LanguageModel
@@ -13,6 +16,8 @@ class ActivationBuffer:
                  data, # generator which yields text data
                  model, # LanguageModel from which to extract activations
                  submodules, # submodule of the model from which to extract activations
+                 activation_save_dirs=None,  # paths to save cached activations, one per submodule; if an individual path is None, do not cache for that submodule
+                 activation_cache_dirs=None,  # directories with cached activations to load
                  in_feats=None,
                  out_feats=None, 
                  io='out', # can be 'in', 'out', or 'in_to_out'
@@ -22,9 +27,12 @@ class ActivationBuffer:
                  out_batch_size=8192, # size of batches in which to return activations
                  device='cpu' # device on which to store the activations
                  ):
-        
+        if activation_save_dirs is not None and activation_cache_dirs is not None:
+            raise ValueError("Cannot specify both activation_save_dirs and activation_cache_dirs because we cannot cache while using cached values. Choose one.") 
         # dictionary of activations
         self.activations = [None for _ in submodules]
+        if activation_cache_dirs is not None:
+            self.file_iters = [iter(glob.glob(os.path.join(dir_path, '*.pt'))) for dir_path in (activation_cache_dirs)]
         for i, submodule in enumerate(submodules):
             if io == 'in':
                 if in_feats is None:
@@ -49,6 +57,8 @@ class ActivationBuffer:
         self.data = data
         self.model = model # assumes nnsight model is already on the device
         self.submodules = submodules
+        self.activation_save_dirs = activation_save_dirs
+        self.activation_cache_dirs = activation_cache_dirs
         self.io = io
         self.n_ctxs = n_ctxs
         self.ctx_len = ctx_len
@@ -63,6 +73,18 @@ class ActivationBuffer:
         """
         Return a batch of activations
         """
+        if self.activation_cache_dirs is not None:
+            batch_activations = []
+            for file_iter in self.file_iters:
+                try:
+                    # Load next activation file from the current iterator
+                    file_path = next(file_iter)
+                    activations = t.load(file_path)
+                    batch_activations.append(activations.to(self.device))
+                except StopIteration:
+                    # No more files to load, end of iteration
+                    raise StopIteration
+            return batch_activations
         # if buffer is less than half full, refresh
         if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
             self.refresh()
@@ -71,7 +93,14 @@ class ActivationBuffer:
         unreads = (~self.read).nonzero().squeeze()
         idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
         self.read[idxs] = True
-        return [self.activations[i][idxs] for i in range(len(self.activations))]
+        batch_activations = [self.activations[i][idxs] for i in range(len(self.activations))]
+        if self.activation_save_dirs is not None:
+            for i, (activations_batch, path) in enumerate(zip(batch_activations, self.activation_save_dirs)):
+                if path is not None:
+                    filename = f"activations_{i}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}.pt"
+                    filepath = os.path.join(path, filename)
+                    t.save(activations_batch.cpu(), filepath)
+        return batch_activations
     
     def text_batch(self, batch_size=None):
         """
