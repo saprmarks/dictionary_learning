@@ -76,3 +76,24 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
+            
+class IdentityDict(Dictionary, nn.Module):
+    """
+    An identity dictionary, i.e. the identity function.
+    """
+    def __init__(self, activation_dim):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = activation_dim
+
+    def encode(self, x):
+        return x
+    
+    def decode(self, f):
+        return f
+    
+    def forward(self, x, output_features=False, ghost_mask=None):
+        if output_features:
+            return x, x
+        else:
+            return x
