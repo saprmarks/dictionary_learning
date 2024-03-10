@@ -1,6 +1,6 @@
 This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller. 
 
-For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of December 2023, nnsight is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/notebooks/walkthrough/).
+For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of December 2023, nnsight is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/notebooks/walkthrough/). (As a case in point, this repo currently requires `nnsight` 0.1, and will not work with `nnsight` 0.2 or later. `pip install -r requirements.txt` should handle this for you; this repo will be made compatible with 0.2 soon.)
 
 Some dictionaries trained using this repository (and asociated training checkpoints) can be accessed at [https://baulab.us/u/smarks/autoencoders/](https://baulab.us/u/smarks/autoencoders/). See below for more information about these dictionaries.
 
