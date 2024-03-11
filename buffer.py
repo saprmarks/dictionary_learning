@@ -14,7 +14,7 @@ class ActivationBuffer:
         model, # LanguageModel from which to extract activations
         submodule, # submodule of the model from which to extract activations
         in_feats=None,
-        out_feats=None, 
+        out_feats=None,
         io='out', # can be 'in', 'out', or 'in_to_out'
         n_ctxs=3e4, # approximate number of contexts to store in the buffer
         ctx_len=128, # length of each context
@@ -117,18 +117,19 @@ class ActivationBuffer:
         self.activations = self.activations[~self.read]
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
-                
-            with self.model.trace(self.text_batch(), invoker_args={"truncation" : True, "max_length" : self.ctx_len}) as tracer:
-                if self.io == 'in':
-                    hidden_states = self.submodule.inputs
-                else:
-                    hidden_states = self.submodule.output
-                while type(hidden_states.shape) == tuple:
-                    hidden_states = hidden_states[0]
-                hidden_states = hidden_states[tracer.input[1]['attention_mask'] != 0]
-                hidden_states = hidden_states.save()
-            self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
-            self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+
+            with t.no_grad():    
+                with self.model.trace(self.text_batch(), invoker_args={"truncation" : True, "max_length" : self.ctx_len}) as tracer:
+                    if self.io == 'in':
+                        hidden_states = self.submodule.inputs
+                    else:
+                        hidden_states = self.submodule.output
+                    while type(hidden_states.shape) == tuple:
+                        hidden_states = hidden_states[0]
+                    hidden_states = hidden_states[tracer.input[1]['attention_mask'] != 0]
+                    hidden_states = hidden_states.save()
+                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
+                self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
     
     def _refresh_in_to_out(self):
         """
