@@ -11,10 +11,10 @@ Implements a buffer of activations
 class ActivationBuffer:
     def __init__(self, 
                  data, # generator which yields text data
-                 model:LanguageModel, # LanguageModel from which to extract activations
+                 model : LanguageModel, # LanguageModel from which to extract activations
                  submodule, # submodule of the model from which to extract activations
                  in_feats=None,
-                 out_feats=None, 
+                 out_feats=None,
                  io='out', # can be 'in', 'out', or 'in_to_out'
                  n_ctxs=3e4, # approximate number of contexts to store in the buffer
                  ctx_len=128, # length of each context
@@ -54,7 +54,7 @@ class ActivationBuffer:
         self.read = t.zeros(0).bool()
 
         self.data = data
-        self.model:LanguageModel = model # assumes nnsight model is already on the device
+        self.model : LanguageModel = model.to(device)
         self.submodule = submodule
         self.io = io
         self.n_ctxs = n_ctxs
