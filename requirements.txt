@@ -1,1 +1,2 @@
 nnsight
+zstandard

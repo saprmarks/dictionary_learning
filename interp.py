@@ -27,12 +27,16 @@ def list_decode(model, x):
 
 def random_feature(model, submodule, autoencoder, buffer, num_examples=10):
     inputs = buffer.tokenized_batch()
+<<<<<<< HEAD
     with model.generate(
         inputs["input_ids"],
         max_new_tokens=1,
         pad_token_id=model.tokenizer.pad_token_id,
         scan=False,
     ):
+=======
+    with model.trace(inputs['input_ids'], scan=False, pad_token_id=model.tokenizer.pad_token_id):
+>>>>>>> cadentj-main
         hidden_states = submodule.output.save()
     dictionary_activations = autoencoder.encode(hidden_states)
     num_features = dictionary_activations.shape[2]
@@ -73,16 +77,20 @@ def feature_effect(
     """
     # clean run
     with model.trace(input_tokens):
+<<<<<<< HEAD
 
         output = model.output.save()
 
+=======
+>>>>>>> cadentj-main
         if dictionary is None:
             pass
         elif not add_residual:  # run hidden state through autoencoder
             if type(submodule.output.shape) == tuple:
-                submodule.output[0][:] = dictionary(submodule.output[0])
+                submodule.output[0][:] = dictionary(submodule.output[0]) # TODO: This line might be broken. Confirm w Jaden.
             else:
                 submodule.output = dictionary(submodule.output)
+<<<<<<< HEAD
     clean_logits = output.logits[0, -1, :]
     clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
@@ -91,6 +99,14 @@ def feature_effect(
 
         output = model.output.save()
 
+=======
+
+        clean_logits = model.output.logits[0, -1, :]
+    clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
+
+    # ablated run
+    with model.trace(input_tokens):
+>>>>>>> cadentj-main
         if type(submodule.output.shape) == tuple:
             x = submodule.output[0]
         else:
@@ -115,7 +131,12 @@ def feature_effect(
             else:
                 submodule.output = x
 
+<<<<<<< HEAD
     ablated_logits = output.logits[0, -1, :]
+=======
+        ablated_logits = model.output.logits[0, -1, :]
+    
+>>>>>>> cadentj-main
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
     diff = clean_logprobs - ablated_logprobs
 
@@ -134,7 +155,11 @@ def examine_dimension(
 
     # are we working with residuals?
     is_resid = False
+<<<<<<< HEAD
     with t.no_grad(), model.trace("dummy text"):
+=======
+    with model.tracer("dummy text"):
+>>>>>>> cadentj-main
         if type(submodule.output.shape) == tuple:
             is_resid = True
 
@@ -146,12 +171,16 @@ def examine_dimension(
         )
 
     inputs = buffer.tokenized_batch().to("cuda")
+<<<<<<< HEAD
     with model.generate(
         inputs["input_ids"],
         max_new_tokens=1,
         pad_token_id=model.tokenizer.pad_token_id,
         scan=False,
     ):
+=======
+    with model.trace(inputs['input_ids'], scan=False, pad_token_id=model.tokenizer.pad_token_id):
+>>>>>>> cadentj-main
         hidden_states = submodule.output.save()
     hidden_states = hidden_states[0] if is_resid else hidden_states
     if dictionary is not None:

@@ -26,81 +26,78 @@ def loss_recovered(
 
     # unmodified logits
     with t.no_grad():
-        output = model.trace(
-            text, invoker_args={"truncation": True, "max_length": max_len}, trace=False
-        )
+        with model.trace(text, invoker_args={"truncation": True, "max_length": max_len}):
+            output = model.output.save()
     try:
-        logits_original = output.logits
+        logits_original = output.logits.value
     except:
-        logits_original = output
-
+        logits_original = output.value
+    
     # logits when replacing component output with reconstruction by autoencoder
     with t.no_grad(), model.trace(
         text, invoker_args={"truncation": True, "max_length": max_len}
     ):
-
-        output = model.output.save()
-
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
                 if type(submodule.input.shape) == tuple:
-                    submodule.input[0][:] = dictionary(submodule.input[0])
+                    submodule.input[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = dictionary(submodule.input)
             elif io == "out":
                 if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = dictionary(submodule.output[0])
+                    submodule.output[0][:] = dictionary(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.output)
             elif io == "in_to_out":
                 if type(submodule.input.shape) == tuple:
-                    submodule.output[0][:] = dictionary(submodule.input[0])
+                    submodule.output[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
+            
+        output = model.output.save()
 
     try:
-        logits_reconstructed = output.logits
+        logits_reconstructed = output.value.logits
     except:
-        logits_reconstructed = output
+        logits_reconstructed = output.value
 
     # logits when zero ablating components
     with t.no_grad(), model.trace(
         text, invoker_args={"truncation": True, "max_length": max_len}
-    ) as tracer:
-        
-        output = model.output.save()
-
+    ):
         for submodule in submodules:
             if io == "in":
                 if type(submodule.input.shape) == tuple:
-                    submodule.input[0][:] = t.zeros_like(submodule.input[0])
+                    submodule.input[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = t.zeros_like(submodule.input)
             elif io == "out":
                 if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = t.zeros_like(submodule.output[0])
+                    submodule.output[0][:] = t.zeros_like(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.output)
             elif io == "in_to_out":
                 if type(submodule.input.shape) == tuple:
-                    submodule.output[0][:] = t.zeros_like(submodule.input[0])
+                    submodule.output[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
+        input = model.input.save()
+        output = model.output.save()
 
     try:
-        logits_zero = output.logits
+        logits_zero = output.value.logits
     except:
-        logits_zero = output
+        logits_zero = output.value
 
     try:
-        tokens = tracer._invoker.inputs["input_ids"].to(logits_original.device)
+        tokens = input[1]['input_ids']
     except:
-        tokens = tracer._invoker.inputs["input"].to(logits_original.device)
-
+        tokens = input[1].value['input']
+    
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
         loss = t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)(
