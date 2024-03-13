@@ -23,10 +23,14 @@ def loss_recovered(
     How much of the model's loss is recovered by replacing the component output
     with the reconstruction by the autoencoder?
     """
+    if max_len is None:
+        invoker_args = {}
+    else:
+        invoker_args = {"truncation": True, "max_length": max_len}
 
     # unmodified logits
     with t.no_grad():
-        with model.trace(text, invoker_args={"truncation": True, "max_length": max_len}):
+        with model.trace(text, invoker_args=invoker_args):
             output = model.output.save()
     try:
         logits_original = output.logits.value
@@ -34,9 +38,7 @@ def loss_recovered(
         logits_original = output.value
     
     # logits when replacing component output with reconstruction by autoencoder
-    with t.no_grad(), model.trace(
-        text, invoker_args={"truncation": True, "max_length": max_len}
-    ):
+    with t.no_grad(), model.trace(text, invoker_args=invoker_args):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
                 if type(submodule.input.shape) == tuple:
@@ -64,9 +66,7 @@ def loss_recovered(
         logits_reconstructed = output.value
 
     # logits when zero ablating components
-    with t.no_grad(), model.trace(
-        text, invoker_args={"truncation": True, "max_length": max_len}
-    ):
+    with t.no_grad(), model.trace(text, invoker_args=invoker_args):
         for submodule in submodules:
             if io == "in":
                 if type(submodule.input.shape) == tuple:
