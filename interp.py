@@ -105,10 +105,13 @@ def feature_effect(
     
     ablated_logits = invoker.output.logits[:, -1, :]
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
-    diff = clean_logprobs - ablated_logprobs
+    logit_diff = clean_logits - ablated_logits
+    logprob_diff = clean_logprobs - ablated_logprobs
 
-    top_probs, top_tokens = t.topk(diff.mean(dim=0), k=k, largest=largest)
-    return top_tokens, top_probs
+    top_logits, top_logit_tokens = t.topk(logit_diff.mean(dim=0), k=k, largest=largest)
+    top_logprobs, top_logprob_tokens = t.topk(logprob_diff.mean(dim=0), k=k, largest=largest)
+
+    return top_logits, top_logit_tokens, top_logprobs, top_logprob_tokens
 
 
 def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128, n_inputs=512,
@@ -142,8 +145,11 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
                 continue
             idxs = (tokens == tok).nonzero(as_tuple=True)
             token_mean_acts[tok.item()] = activations[idxs].mean().item()
-    top_tokens = sorted(token_mean_acts.items(), key=lambda x: x[1], reverse=True)[:k]
+    sorted_tokens = sorted(token_mean_acts.items(), key=lambda x: x[1], reverse=True)
+    top_tokens = sorted_tokens[:k]
     top_tokens = [(model.tokenizer.decode(tok), act) for tok, act in top_tokens]
+    bottom_tokens = sorted_tokens[-k:]
+    bottom_tokens = [(model.tokenizer.decode(tok), act) for tok, act in bottom_tokens]
 
     flattened_acts = rearrange(activations, 'b n -> (b n)')
     topk_indices = t.argsort(flattened_acts, dim=0, descending=True)[:k]
@@ -158,7 +164,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
     decoded_tokens = _list_decode(tokens)
     top_contexts = text_neuron_activations(decoded_tokens, activations)
 
-    top_affected = feature_effect(
+    top_logits, top_logit_tokens, top_logprobs, top_logprob_tokens = feature_effect(
         model,
         submodule,
         dictionary,
@@ -166,9 +172,15 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         tokens,
         k=k
     )
-    top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]
+    top_affected_logits = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(top_logit_tokens, top_logits)]
+    top_affected_logprobs = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(top_logprob_tokens, top_logprobs)]
 
-    return namedtuple('featureProfile', ['top_contexts', 'top_tokens', 'top_affected'])(top_contexts, top_tokens, top_affected)
+    return namedtuple(
+        'featureProfile',
+        ['top_contexts', 'top_tokens', 'bottom_tokens', 'top_affected_logits', 'top_affected_logprobs']
+    )(
+        top_contexts, top_tokens, bottom_tokens, top_affected_logits, top_affected_logprobs
+    )
 
 def feature_umap(
         dictionary,
