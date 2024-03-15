@@ -116,7 +116,12 @@ def evaluate(
 
         out = {} # dict of results
 
-        acts = next(activations).to(device)
+        try:
+            acts = next(activations).to(device)
+        except StopIteration:
+            raise StopIteration(
+                "Not enough activations in buffer. Pass a buffer with a smaller batch size or more data."
+            )
 
         # compute reconstruction (L2) loss and sparsity loss
         mse_loss, sparsity_loss = sae_loss(acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True)
