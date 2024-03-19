@@ -85,8 +85,8 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         dim_idx = random.randint(0, activations.shape[-1]-1)
 
     inputs = buffer.text_batch(batch_size=n_inputs)
-    with model.trace(inputs, max_length=max_length, truncation=True):
-        tokens = model.input[1]['input_ids'] # if you're getting errors, check here; might only work for pythia models
+    with model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
+        tokens = model.input[1]['input_ids'].save() # if you're getting errors, check here; might only work for pythia models
         activations = submodule.output
         if type(activations.shape) == tuple:
             activations = activations[0]
