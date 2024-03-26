@@ -8,6 +8,12 @@ import torch as t
 from nnsight import LanguageModel
 
 from .training import sae_loss
+from .config import DEBUG
+
+if DEBUG:
+    tracer_kwargs = {'scan' : True, 'validate' : True}
+else:
+    tracer_kwargs = {'scan' : False, 'validate' : False}
 
 
 def loss_recovered(
@@ -23,35 +29,44 @@ def loss_recovered(
     How much of the model's loss is recovered by replacing the component output
     with the reconstruction by the autoencoder?
     """
+    # figure out which submodules output tuples
+    is_tuple = {}
+    with model.trace('_'):
+        if io == 'out':
+            for submodule in submodules:
+                is_tuple[submodule] = type(submodule.output.shape) == tuple
+        else:
+            for submodule in submodules:
+                is_tuple[submodule] = type(submodule.input.shape) == tuple
+
     if max_len is None:
         invoker_args = {}
     else:
         invoker_args = {"truncation": True, "max_length": max_len}
 
     # unmodified logits
-    with t.no_grad():
-        with model.trace(text, invoker_args=invoker_args):
-            output = model.output.save()
+    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
+        output = model.output.save()
     try:
-        logits_original = output.logits.value
+        logits_original = output.value.logits
     except:
         logits_original = output.value
     
     # logits when replacing component output with reconstruction by autoencoder
-    with t.no_grad(), model.trace(text, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
-                if type(submodule.input.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.input[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = dictionary(submodule.input)
             elif io == "out":
-                if type(submodule.output.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.output[0][:] = dictionary(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.output)
             elif io == "in_to_out":
-                if type(submodule.input.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.output[0][:] = dictionary(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.input)
@@ -66,20 +81,20 @@ def loss_recovered(
         logits_reconstructed = output.value
 
     # logits when zero ablating components
-    with t.no_grad(), model.trace(text, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
         for submodule in submodules:
             if io == "in":
-                if type(submodule.input.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.input[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.input = t.zeros_like(submodule.input)
             elif io == "out":
-                if type(submodule.output.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.output[0][:] = t.zeros_like(submodule.output[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.output)
             elif io == "in_to_out":
-                if type(submodule.input.shape) == tuple:
+                if is_tuple[submodule]:
                     submodule.output[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.input)
