@@ -57,7 +57,7 @@ class ActivationBuffer:
         self.read = t.zeros(0).bool()
 
         self.data = data
-        self.model : LanguageModel = model.to(device)
+        self.model = model
         self.submodule = submodule
         self.io = io
         self.n_ctxs = n_ctxs
