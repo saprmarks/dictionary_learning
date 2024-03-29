@@ -1,6 +1,6 @@
 This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller. 
 
-For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of December 2023, nnsight is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/notebooks/walkthrough/). (As a case in point, this repo currently requires `nnsight` 0.1, and will not work with `nnsight` 0.2 or later. `pip install -r requirements.txt` should handle this for you; this repo will be made compatible with 0.2 soon.)
+For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of March 2024, `nnsight` is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](http://nnsight.net/notebooks/walkthrough/).
 
 Some dictionaries trained using this repository (and asociated training checkpoints) can be accessed at [https://baulab.us/u/smarks/autoencoders/](https://baulab.us/u/smarks/autoencoders/). See below for more information about these dictionaries.
 
@@ -41,7 +41,7 @@ Dictionaries have `encode`, `decode`, and `forward` methods -- see `dictionary.p
 
 # Training your own dictionaries
 
-To train your own dictionaries, you'll need to understand a bit about our infrastructure.
+To train your own dictionaries, you'll need to understand a bit about our infrastructure. (See below for downloading our dictionaries.)
 
 One key object is the `ActivationBuffer`, defined in `buffer.py`. Following [Neel Nanda's appraoch](https://www.lesswrong.com/posts/fKuugaxt2XLTkASkk/open-source-replication-and-commentary-on-anthropic-s), `ActivationBuffer`s maintain a buffer of NN activations, which it outputs in batches.
 
@@ -89,7 +89,6 @@ ae = trainSAE(
 Some technical notes our training infrastructure and supported features:
 * Training uses the `ConstrainedAdam` optimizer defined in `training.py`. This is a variant of Adam which supports constraining the `AutoEncoder`'s decoder weights to be norm 1.
 * Neuron resampling: if a `resample_steps` argument is passed to `trainSAE`, then dead neurons will periodically be resampled according to the procedure specified [here](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling).
-* Ghost grads: if a `ghost_threshold` argument is passed to `trainSAE`, then [ghost grads](https://transformer-circuits.pub/2024/jan-update/index.html#dict-learning-resampling) is used. Neurons which haven't fired in more than `ghost_threshold` steps are treated as dead for purposes of ghost grads.
 * Learning rate warmup: if a `warmup_steps` argument is passed to `trainSAE`, then a linear LR warmup is used at the start of training and, if doing neuron resampling, also after every time neurons are resampled.
 
 If `submodule` is a model component where the activations are tuples (e.g. this is common when working with residual stream activations), then the buffer yields the first coordinate of the tuple.
@@ -103,18 +102,18 @@ To download our pretrained dictionaries automatically, run:
 ```
 Per default, this will download dictionaries of all submodules (~2.5 GB). The `--layers "embed,0,1,2,3,4,5"` flag allows you to select specific layers, e.g append `--layers "embed,2"` to download dictionaries for the outputs of embedding, as well as attention, MLP, and residual stream submodules in layer 2. Optionally, you can download checkpoints for the selected layers with `--checkpoints` (note that checkpoints take up ~10 GB per layer).
 
-Currently, the main thing to look for is the dictionaries in our `5_32768` set; this set has dictionaries for MLP outputs, attention outputs, and residual streams in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from the pile with neuron resampling every 250M tokens.
+Currently, the main thing to look for is the dictionaries in our `10_32768` set; this set has dictionaries for MLP outputs, attention outputs, and residual streams (including embeddings) in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from The Pile.
 
-Let's explain the directory structure by example. The `autoencoders/pythia-70m-deduped/mlp_out_layer1/5_32768` directory corresponds to the layer 1 MLP dictionary from `5_32768` set. This directory contains:
+Let's explain the directory structure by example. After using the script above, you'll have a `dictionaries/pythia-70m-deduped/mlp_out_layer1/10_32768` directory corresponding to the layer 1 MLP dictionary from the `10_32768` set. This directory contains:
 * `ae.pt`: the `state_dict` of the fully trained dictionary
 * `config.json`: a json file which specifies the hyperparameters used to train the dictionary
-* `checkpoints/`: a directory containing training checkpoints of the form `ae_step.pt`.
+* `checkpoints/`: a directory containing training checkpoints of the form `ae_step.pt` (only if you used the `--checkpoints` flag)
 
-There are also MLP three sets of MLP output dictionaries, all for Pythia-70m-deduped: `0_8192`, `1_32768`, and `2_32768` (the number after the underscore indicates the hidden dimension of the autoencoder). For more information about the `0_8192` and `1_32768` sets, see [here](https://www.lesswrong.com/posts/AaoWLcmpY3LKvtdyq/some-open-source-dictionaries-and-dictionary-learning). The `2_32768` set is shrouded in mystery and man may never know its true nature.
+We've also previously released other dictionaries which can be found and downloaded [here](https://baulab.us/u/smarks/autoencoders/). 
 
 ## Statistics for our dictionaries
 
-We'll report the following statistics for our `5_32768` set. These were measured using the code in `evaluation.py`.
+We'll report the following statistics for our `10_32768` dictionaries. These were measured using the code in `evaluation.py`.
 * **MSE loss**: average squared L2 distance between an activation and the autoencoder's reconstruction of it
 * **L1 loss**: a measure of the autoencoder's sparsity
 * **L0**: average number of features active above a random token
@@ -122,41 +121,44 @@ We'll report the following statistics for our `5_32768` set. These were measured
 * **CE diff**: difference between the usual cross-entropy loss of the model for next token prediction and the cross entropy when replacing activations with our dictionary's reconstruction
 * **Percentage of CE loss recovered**: when replacing the activation with the dictionary's reconstruction, the percentage of the model's cross-entropy loss on next token prediction that is recovered (relative to the baseline of zero ablating the activation)
 
+### Attention output dictionaries
+
+| Layer | Variance Explained (%) | L1 | L0  | % Alive | CE Diff | % CE Recovered |
+|-------|------------------------|----|-----|---------|---------|----------------|
+| 0     | 92                     | 8  | 128 | 17      | 0.02    | 99             |
+| 1     | 87                     | 9  | 127 | 17      | 0.03    | 94             |
+| 2     | 90                     | 19 | 215 | 12      | 0.05    | 93             |
+| 3     | 89                     | 12 | 169 | 13      | 0.03    | 93             |
+| 4     | 83                     | 8  | 132 | 14      | 0.01    | 95             |
+| 5     | 89                     | 11 | 144 | 20      | 0.02    | 93             |
 
 
 ### MLP output dictionaries
 
-| Layer         | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
-|---------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.0018   | 97               | 6.3           | 9.4  | 37          | 0.050   | 99                |
-| 1 | 0.0090   | 78               | 4.9           | 22.9 | 48          | 0.080   | 87                |
-| 2 | 0.015    | 98               | 7.8           | 23.8 | 31          | 0.12    | 77                |
-| 3 | 0.042    | 75               | 10.8          | 44.1 | 19          | 0.19    | 74                |
-| 4 | 0.050    | 86               | 12            | 27.2 | 22          | 0.21    | 78                |
-| 5 | 0.093    | 91               | 21            | 20.7 | 6.6         | 0.30    | 90                |
+| Layer  | Variance Explained (%) | L1 | L0  | % Alive | CE Diff | % CE Recovered |
+|--------|------------------------|----|-----|---------|---------|----------------|
+|     0  | 97                     | 5  | 5   | 40      | 0.10    | 99             |
+|     1  | 85                     | 8  | 69  | 44      | 0.06    | 95             |
+|     2  | 99                     | 12 | 88  | 31      | 0.11    | 88             |
+|     3  | 88                     | 20 | 160 | 25      | 0.12    | 94             |
+|     4  | 92                     | 20 | 100 | 29      | 0.14    | 90             |
+|     5  | 96                     | 31 | 102 | 35      | 0.15    | 97             |
+
 
 ### Residual stream dictionaries
-NOTE: the layer indices here are, confusingly, offset by 1. So the layer 0 dictionaries is not for the embeddings -- it's for the residual stream at the *end* of layer 0, i.e. what is normally called the layer 1 residual stream. Sorry about the confusion, hopefully this won't happen in future dictionary releases.
+NOTE: these are indexed so that the resid_i dictionary is the *output* of the ith layer. Thus embeddings go first, then layer 0, etc.
 
-| Layer           | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
-|-----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.012    | 85               | 7.7           | 17   | 27          | 0.30    | 94                |
-| 1 | 0.031    | 76               | 8.8           | 15.9 | 26          | 0.54    | 89                |
-| 2 | 0.064    | 93               | 15            | 34.8 | 24          | 1.4     | 76                |
-| 3 | 0.066    | 93               | 15            | 22.6 | 20          | 1.1     | 88                |
-| 4 | 0.098    | 81               | 14            | 17.7 | 17          | 0.89    | 83                |
-| 5 | 0.21     | 82               | 22            | 15.2 | 9.3         | 1.4     | 73                |
+| Layer   | Variance Explained (%) | L1 | L0  | % Alive | CE Diff | % CE Recovered |
+|---------|------------------------|----|-----|---------|---------|----------------|
+|    embed| 96                     |  1 |  3  | 36      | 0.17    | 98             |
+|       0 | 92                     | 11 | 59  | 41      | 0.24    | 97             |
+|       1 | 85                     | 13 | 54  | 38      | 0.45    | 95             |
+|       2 | 96                     | 24 | 108 | 27      | 0.55    | 94             |
+|       3 | 96                     | 23 | 68  | 22      | 0.58    | 95             |
+|       4 | 88                     | 23 | 61  | 27      | 0.48    | 95             |
+|       5 | 90                     | 35 | 72  | 45      | 0.55    | 92             |
 
-### Attention output dictionaries
 
-| Layer          | MSE Loss | % Variance Explained | L1 | L0   | % Alive | CE Diff | % CE Recovered |
-|----------------|----------|--------------------|---------------|------|---------------|---------|-------------------|
-| 0 | 0.0042   | 85               | 5.2           | 35   | 17          | 0.055   | 96                |
-| 1 | 0.0076   | 76               | 4.9           | 28.4 | 15          | 0.068   | 85                |
-| 2 | 0.022    | 75               | 10            | 59.9 | 10          | 0.19    | 76                |
-| 3 | 0.012    | 78               | 6.5           | 34.2 | 10          | 0.10    | 83                |
-| 4 | 0.0075   | 65               | 3.7           | 21.3 | 14          | 0.029   | 89                |
-| 5 | 0.014    | 76               | 5.3           | 17.7 | 7.6         | 0.060   | 82                |
 
 
 # Extra functionality supported by this repo
@@ -170,5 +172,6 @@ We've included support for some experimental features. We briefly investigated t
     * To use this functionality, set the `io` parameter of an activaiton buffer to `'in_to_out'` (default is `'out'`).
     * h/t to Max Li for this suggestion.
 * **Replacing L1 loss with entropy**. Based on the ideas in this [post](https://transformer-circuits.pub/2023/may-update/index.html#simple-factorization), we experimented with using entropy to regularize a dictionary's hidden state instead of L1 loss. This seemed to cause the features to split into dead features (which never fired) and very high-frequency features which fired on nearly every input, which was not the desired behavior. But plausibly there is a way to make this work better.
+* **Ghost grads**, as described [here](https://transformer-circuits.pub/2024/jan-update/index.html). 
 
 
