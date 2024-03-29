@@ -4,7 +4,6 @@ Training dictionaries
 
 import torch as t
 from .dictionary import AutoEncoder
-from .buffer import ActivationBuffer
 import os
 from tqdm import tqdm
 

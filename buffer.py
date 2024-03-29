@@ -1,8 +1,11 @@
 import torch as t
-import zstandard as zstd
-import json
-import io
 from nnsight import LanguageModel
+from .config import DEBUG
+
+if DEBUG:
+    tracer_kwargs = {'scan' : True, 'validate' : True}
+else:
+    tracer_kwargs = {'scan' : False, 'validate' : False}
 
 """
 Implements a buffer of activations
@@ -11,10 +14,10 @@ Implements a buffer of activations
 class ActivationBuffer:
     def __init__(self, 
                  data, # generator which yields text data
-                 model, # LanguageModel from which to extract activations
+                 model : LanguageModel, # LanguageModel from which to extract activations
                  submodule, # submodule of the model from which to extract activations
                  in_feats=None,
-                 out_feats=None, 
+                 out_feats=None,
                  io='out', # can be 'in', 'out', or 'in_to_out'
                  n_ctxs=3e4, # approximate number of contexts to store in the buffer
                  ctx_len=128, # length of each context
@@ -54,7 +57,7 @@ class ActivationBuffer:
         self.read = t.zeros(0).bool()
 
         self.data = data
-        self.model = model # assumes nnsight model is already on the device
+        self.model = model
         self.submodule = submodule
         self.io = io
         self.n_ctxs = n_ctxs
@@ -62,6 +65,13 @@ class ActivationBuffer:
         self.in_batch_size = in_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
+
+        # figure out if the activation is a tuple
+        with model.trace('_'):
+            if self.io == 'out':
+                self.is_tuple = type(submodule.output.shape) == tuple
+            else:
+                self.is_tuple = type(submodule.input.shape) == tuple
     
     def __iter__(self):
         return self
@@ -117,20 +127,23 @@ class ActivationBuffer:
         self.activations = self.activations[~self.read]
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
-                
-                with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
+            
+            with t.no_grad():
+                with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}):
                     if self.io == 'in':
-                        hidden_states = self.submodule.inputs
+                        hidden_states = self.submodule.input.save()
                     else:
-                        hidden_states = self.submodule.output
-                    while type(hidden_states.shape) == tuple:
-                        hidden_states = hidden_states[0]
-                    hidden_states = hidden_states[invoker.input['attention_mask'] != 0]
-                    hidden_states = hidden_states.save()
-                self.activations = t.cat([self.activations, hidden_states.value.to(self.device)], dim=0)
+                        hidden_states = self.submodule.output.save()
+                    if self.is_tuple:
+                        hidden_states = hidden_states[0].save()
+                    input = self.model.input.save()
+                attn_mask = input.value[1]['attention_mask']
+                hidden_states = hidden_states.value[attn_mask != 0]
+                self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
                 self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
-    
+
     def _refresh_in_to_out(self):
+        # TODO fix the attention mask stuff here
         """
         For when io == 'in_to_out'
         """
@@ -139,16 +152,17 @@ class ActivationBuffer:
 
         while len(self.activations_in) < self.n_ctxs * self.ctx_len:
 
-            with self.model.invoke(self.text_batch(), truncation=True, max_length=self.ctx_len) as invoker:
+            with t.no_grad(), self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}):
                 hidden_states_in = self.submodule.input
                 hidden_states_out = self.submodule.output
-                while type(hidden_states_in.shape) == tuple:
+                if self.is_tuple:
                     hidden_states_in = hidden_states_in[0]
-                while type(hidden_states_out.shape) == tuple:
+                if self.is_tuple:
                     hidden_states_out = hidden_states_out[0]
-                hidden_states_in = hidden_states_in[invoker.input['attention_mask'] != 0]
-                hidden_states_out = hidden_states_out[invoker.input['attention_mask'] != 0]
-                hidden_states_in, hidden_states_out = hidden_states_in.save(), hidden_states_out.save()
+                _, inputs = self.model.input
+                attn_mask = inputs.inputs['attention_mask']
+                hidden_states_in = hidden_states_in[attn_mask != 0].save()
+                hidden_states_out = hidden_states_out[attn_mask != 0].save()
                 
             self.activations_in =  t.cat([self.activations_in,  hidden_states_in.value.to(self.device)], dim=0)
             self.activations_out = t.cat([self.activations_out, hidden_states_out.value.to(self.device)], dim=0)

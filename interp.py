@@ -1,57 +1,11 @@
-import zstandard as zstd
-import json
-import os
-import io
 import random
-from tqdm import tqdm
-from nnsight import LanguageModel
-from dictionary_learning.buffer import ActivationBuffer
-from dictionary_learning.dictionary import AutoEncoder
-from dictionary_learning.training import trainSAE
-from collections import defaultdict
 from circuitsvis.activations import text_neuron_activations
-from circuitsvis.topk_tokens import topk_tokens
-from datasets import load_dataset
 from einops import rearrange
 import torch as t
 from collections import namedtuple
 import umap
 import pandas as pd
 import plotly.express as px
-
-def list_decode(model, x):
-    if isinstance(x, int):
-        return model.tokenizer.decode(x)
-    else:
-        return [list_decode(model, y) for y in x]
-    
-
-def random_feature(model, submodule, autoencoder, buffer,
-                   num_examples=10):
-    inputs = buffer.tokenized_batch()
-    with model.generate(max_new_tokens=1, pad_token_id=model.tokenizer.pad_token_id) as generator:
-        with generator.invoke(inputs['input_ids'], scan=False) as invoker:
-            hidden_states = submodule.output.save()
-    dictionary_activations = autoencoder.encode(hidden_states.value)
-    num_features = dictionary_activations.shape[2]
-    feat_idx = random.randint(0, num_features-1)
-    
-    flattened_acts = rearrange(dictionary_activations, 'b n d -> (b n) d')
-    acts = dictionary_activations[:, :, feat_idx].cpu()
-    flattened_acts = rearrange(acts, 'b l -> (b l)')
-    top_indices = t.argsort(flattened_acts, dim=0, descending=True)[:num_examples]
-    batch_indices = top_indices // acts.shape[1]
-    token_indices = top_indices % acts.shape[1]
-
-    tokens = [
-        inputs['input_ids'][batch_idx, :token_idx+1].tolist() for batch_idx, token_idx in zip(batch_indices, token_indices)
-    ]
-    tokens = list_decode(model, tokens)
-    activations = [
-        acts[batch_idx, :token_id+1, None, None] for batch_idx, token_id in zip(batch_indices, token_indices)
-    ]
-
-    return (feat_idx, tokens, activations)
 
 def feature_effect(
         model,
@@ -67,7 +21,7 @@ def feature_effect(
     Effect of ablating the feature on top k predictions for next token.
     """
     # clean run
-    with model.invoke(inputs) as invoker:
+    with model.trace(inputs):
         if dictionary is None:
             pass
         elif not add_residual: # run hidden state through autoencoder
@@ -75,11 +29,15 @@ def feature_effect(
                 submodule.output[0][:] = dictionary(submodule.output[0])
             else:
                 submodule.output = dictionary(submodule.output)
-    clean_logits = invoker.output.logits[:, -1, :]
+        clean_output = model.output.save()
+    try:
+        clean_logits = clean_output.value.logits[:, -1, :]
+    except:
+        clean_logits = clean_output.value[:, -1, :]
     clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
     # ablated run
-    with model.invoke(inputs) as invoker:
+    with model.trace(inputs):
         if dictionary is None:
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:, -1, feature] = 0
@@ -102,16 +60,16 @@ def feature_effect(
                 submodule.output[0][:] = x_hat
             else:
                 submodule.output = x_hat
-    
-    ablated_logits = invoker.output.logits[:, -1, :]
+        ablated_output = model.output.save()
+    try:
+        ablated_logits = ablated_output.value.logits[:, -1, :]
+    except:
+        ablated_logits = ablated_output.value[:, -1, :]
     ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
-    logit_diff = clean_logits - ablated_logits
-    logprob_diff = clean_logprobs - ablated_logprobs
 
-    top_logits, top_logit_tokens = t.topk(logit_diff.mean(dim=0), k=k, largest=largest)
-    top_logprobs, top_logprob_tokens = t.topk(logprob_diff.mean(dim=0), k=k, largest=largest)
-
-    return top_logits, top_logit_tokens, top_logprobs, top_logprob_tokens
+    diff = clean_logprobs - ablated_logprobs
+    top_probs, top_tokens = t.topk(diff.mean(dim=0), k=k, largest=largest)
+    return top_tokens, top_probs
 
 
 def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128, n_inputs=512,
@@ -127,7 +85,8 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         dim_idx = random.randint(0, activations.shape[-1]-1)
 
     inputs = buffer.text_batch(batch_size=n_inputs)
-    with model.invoke(inputs, max_length=max_length, truncation=True) as invoker:
+    with model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
+        tokens = model.input[1]['input_ids'].save() # if you're getting errors, check here; might only work for pythia models
         activations = submodule.output
         if type(activations.shape) == tuple:
             activations = activations[0]
@@ -137,7 +96,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
     activations = activations.value
 
     # get top k tokens by mean activation
-    tokens = invoker.input['input_ids']
+    tokens = tokens.value
     token_mean_acts = {}
     for ctx in tokens:
         for tok in ctx:
@@ -145,11 +104,8 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
                 continue
             idxs = (tokens == tok).nonzero(as_tuple=True)
             token_mean_acts[tok.item()] = activations[idxs].mean().item()
-    sorted_tokens = sorted(token_mean_acts.items(), key=lambda x: x[1], reverse=True)
-    top_tokens = sorted_tokens[:k]
+    top_tokens = sorted(token_mean_acts.items(), key=lambda x: x[1], reverse=True)[:k]
     top_tokens = [(model.tokenizer.decode(tok), act) for tok, act in top_tokens]
-    bottom_tokens = sorted_tokens[-k:]
-    bottom_tokens = [(model.tokenizer.decode(tok), act) for tok, act in bottom_tokens]
 
     flattened_acts = rearrange(activations, 'b n -> (b n)')
     topk_indices = t.argsort(flattened_acts, dim=0, descending=True)[:k]
@@ -164,7 +120,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
     decoded_tokens = _list_decode(tokens)
     top_contexts = text_neuron_activations(decoded_tokens, activations)
 
-    top_logits, top_logit_tokens, top_logprobs, top_logprob_tokens = feature_effect(
+    top_affected = feature_effect(
         model,
         submodule,
         dictionary,
@@ -172,15 +128,9 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         tokens,
         k=k
     )
-    top_affected_logits = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(top_logit_tokens, top_logits)]
-    top_affected_logprobs = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(top_logprob_tokens, top_logprobs)]
+    top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]
 
-    return namedtuple(
-        'featureProfile',
-        ['top_contexts', 'top_tokens', 'bottom_tokens', 'top_affected_logits', 'top_affected_logprobs']
-    )(
-        top_contexts, top_tokens, bottom_tokens, top_affected_logits, top_affected_logprobs
-    )
+    return namedtuple('featureProfile', ['top_contexts', 'top_tokens', 'top_affected'])(top_contexts, top_tokens, top_affected)
 
 def feature_umap(
         dictionary,
