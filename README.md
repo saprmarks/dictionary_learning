@@ -96,10 +96,12 @@ If `submodule` is a model component where the activations are tuples (e.g. this 
 
 # Downloading our open-source dictionaries
 
-To download our open-source dictionaries and associated training checkpoints, navigate to the directory you would like to save the dictionaries in, and then:
+To download our pretrained dictionaries automatically, run:
+
 ```bash
-wget -r --no-parent https://baulab.us/u/smarks/autoencoders/
+./pretrained_dictionary_downloader.sh
 ```
+Per default, this will download dictionaries of all submodules (~2.5 GB). The `--layers "embed,0,1,2,3,4,5"` flag allows you to select specific layers, e.g append `--layers "embed,2"` to download dictionaries for the submodules embedding, as well as attention, MLP and residual stream in layer 2. Optionally, you can download checkpoints for the selected layers with `--checkpoints` (note that checkpoints take up ~3.2 GB per layer).
 
 Currently, the main thing to look for is the dictionaries in our `5_32768` set; this set has dictionaries for MLP outputs, attention outputs, and residual streams in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from the pile with neuron resampling every 250M tokens.
 
