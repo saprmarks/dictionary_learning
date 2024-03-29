@@ -4,7 +4,7 @@
 BASE_URL="https://baulab.us/u/smarks/autoencoders/pythia-70m-deduped"
 
 # Local directory where you want to replicate the folder structure, now including the specified root directory
-LOCAL_DIR="./dictionaries_pythia-70m-deduped"
+LOCAL_DIR="dictionaires/pythia-70m-deduped"
 
 # Default 'a' values array
 declare -a default_a_values=("attn_out_layerX" "mlp_out_layerX" "resid_out_layerX") # Removed "embed" from default handling
