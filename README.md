@@ -55,8 +55,7 @@ from dictionary_learning.training import trainSAE
 
 model = LanguageModel(
     'EleutherAI/pythia-70m-deduped', # this can be any Huggingface model
-    device_map = 'cuda:0',
-    dispatch = True
+    device_map = 'cuda:0'
 )
 submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
 activation_dim = 512 # output dimension of the MLP
