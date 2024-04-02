@@ -17,7 +17,7 @@ To use `dictionary_learning`, include it as a subdirectory in some project's dir
 
 # Using trained dictionaries
 
-To use a dictionary, just import the dictionary class (currently only autoencoders are supported), initialize an `AutoEncoder`, and load a saved state_dict.
+To use a dictionary, just import the dictionary class (currently only autoencoders are supported), initialize an `AutoEncoder`, and load a saved state_dict (see a description for downloading our pretrained dictionaries below).
 ```python
 from dictionary_learning import AutoEncoder
 import torch
@@ -55,7 +55,8 @@ from dictionary_learning.training import trainSAE
 
 model = LanguageModel(
     'EleutherAI/pythia-70m-deduped', # this can be any Huggingface model
-    device_map = 'cuda:0'
+    device_map = 'cuda:0',
+    dispatch = True
 )
 submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
 activation_dim = 512 # output dimension of the MLP
@@ -71,7 +72,7 @@ buffer = ActivationBuffer(
     data,
     model,
     submodule,
-    out_feats=activation_dim, # output dimension of the model component
+    submodule_output_dim=activation_dim, # output dimension of the model component
     n_ctxs=3e4, # you can set this higher or lower dependong on your available memory
     device='cuda:0' # doesn't have to be the same device that you train your autoencoder on
 ) # buffer will return batches of tensors of dimension = submodule's output dimension
