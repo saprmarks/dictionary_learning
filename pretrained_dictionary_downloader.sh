@@ -59,7 +59,7 @@ fi
 for a_value in "${a_values[@]}"; do
     for c in "${c_values[@]}"; do
         DOWNLOAD_URL="${BASE_URL}/${a_value}/${sae_set_name}/${c}"
-        LOCAL_PATH="${LOCAL_DIR}/${a_value}/${c}"
+        LOCAL_PATH="${LOCAL_DIR}/${a_value}/${sae_set_name}/${c}"
         if [ "${c}" == "checkpoints" ]; then
             # Special handling for downloading checkpoints as folders
             mkdir -p "${LOCAL_PATH}"
