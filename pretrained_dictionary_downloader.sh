@@ -4,7 +4,7 @@
 BASE_URL="https://baulab.us/u/smarks/autoencoders/pythia-70m-deduped"
 
 # Local directory where you want to replicate the folder structure, now including the specified root directory
-LOCAL_DIR="dictionaires/pythia-70m-deduped"
+LOCAL_DIR="dictionaries/pythia-70m-deduped"
 
 # Default 'a' values array
 declare -a default_a_values=("attn_out_layerX" "mlp_out_layerX" "resid_out_layerX") # Removed "embed" from default handling
@@ -59,7 +59,7 @@ fi
 for a_value in "${a_values[@]}"; do
     for c in "${c_values[@]}"; do
         DOWNLOAD_URL="${BASE_URL}/${a_value}/${sae_set_name}/${c}"
-        LOCAL_PATH="${LOCAL_DIR}/${a_value}/${c}"
+        LOCAL_PATH="${LOCAL_DIR}/${a_value}/${sae_set_name}/${c}"
         if [ "${c}" == "checkpoints" ]; then
             # Special handling for downloading checkpoints as folders
             mkdir -p "${LOCAL_PATH}"
