@@ -81,7 +81,7 @@ class IdentityDict(Dictionary, nn.Module):
     """
     An identity dictionary, i.e. the identity function.
     """
-    def __init__(self, activation_dim):
+    def __init__(self, activation_dim=None):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = activation_dim
