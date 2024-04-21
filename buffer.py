@@ -7,43 +7,38 @@ if DEBUG:
 else:
     tracer_kwargs = {'scan' : False, 'validate' : False}
 
-"""
-Implements a buffer of activations
-outputs activations of shape (n_ctxs, ctx_len, submodule_input(output)_dim)
-"""
 
 class ActivationBuffer:
+    """
+    Implements a buffer of activations. The buffer stores activations from a model,
+    yields them in batches, and refreshes them when the buffer is less than half full.
+    """
     def __init__(self, 
                  data, # generator which yields text data
                  model : LanguageModel, # LanguageModel from which to extract activations
                  submodule, # submodule of the model from which to extract activations
-                 submodule_input_dim=None,
-                 submodule_output_dim=None,
-                 io='out', # whether to extract input or output activations
+                 n_feats=None, # number of features in the submodule; if None, try to detect automatically
+                 io='out', # can be 'in' or 'out'; whether to extract input or output activations
                  n_ctxs=3e4, # approximate number of contexts to store in the buffer
                  ctx_len=128, # length of each context
-                 load_buffer_batch_size=512, # size of batches in which to process the data when adding to buffer
-                 return_act_batch_size=8192, # size of batches in which to return activations
+                 refresh_batch_size=512, # size of batches in which to process the data when adding to buffer
+                 out_batch_size=8192, # size of batches in which to yield activations
                  device='cpu' # device on which to store the activations
                  ):
         
-        if io == 'in':
-            if submodule_input_dim is None:
-                try:
-                    submodule_input_dim = submodule.in_features
-                except:
-                    raise ValueError("submodule_input_dim cannot be inferred and must be specified directly")
-            self.activations = t.empty(0, submodule_input_dim, device=device)
-
-        elif io == 'out':
-            if submodule_output_dim is None:
-                try:
-                    submodule_output_dim = submodule.out_features
-                except:
-                    raise ValueError("submodule_output_dim cannot be inferred and must be specified directly")
-            self.activations = t.empty(0, submodule_output_dim, device=device)
-        else:
+        if io not in ['in', 'out']:
             raise ValueError("io must be either 'in' or 'out'")
+
+        if n_feats is None:
+            try:
+                if io == 'in':
+                    n_feats = submodule.in_features
+                else:
+                    n_feats = submodule.out_features
+            except:
+                raise ValueError("n_feats cannot be inferred and must be specified directly")
+        self.activations = t.empty(0, n_feats, device=device)
+
         self.read = t.zeros(0).bool()
 
         self.data = data
@@ -52,8 +47,8 @@ class ActivationBuffer:
         self.io = io
         self.n_ctxs = n_ctxs
         self.ctx_len = ctx_len
-        self.load_buffer_batch_size = load_buffer_batch_size
-        self.return_act_batch_size = return_act_batch_size
+        self.refresh_batch_size = refresh_batch_size
+        self.out_batch_size = out_batch_size
         self.device = device
     
     def __iter__(self):
@@ -70,7 +65,7 @@ class ActivationBuffer:
 
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
-            idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.return_act_batch_size]]
+            idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
             self.read[idxs] = True
             return self.activations[idxs]
     
@@ -79,7 +74,7 @@ class ActivationBuffer:
         Return a list of text
         """
         if batch_size is None:
-            batch_size = self.load_buffer_batch_size
+            batch_size = self.refresh_batch_size
         try:
             return [
                 next(self.data) for _ in range(batch_size)
