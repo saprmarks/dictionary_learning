@@ -6,14 +6,23 @@ import matplotlib.pyplot as plt
 import torch as t
 
 from nnsight import LanguageModel
-
-from .training import sae_loss
 from .config import DEBUG
 
 if DEBUG:
     tracer_kwargs = {'scan' : True, 'validate' : True}
 else:
     tracer_kwargs = {'scan' : False, 'validate' : False}
+
+def sae_loss(ae, x):
+    """
+    Compute the reconstruction loss and sparsity loss for a set of activations.
+    """
+    with t.no_grad():
+        x_hat, f = ae(x, output_features=True)
+        l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
+        l1_loss = f.norm(p=1, dim=-1).mean()
+        l0 = (f == 0).float().sum(dim=-1).mean()
+    return l2_loss, l1_loss, l0
 
 
 def loss_recovered(
@@ -151,23 +160,19 @@ def evaluate(
             )
 
         # compute reconstruction (L2) loss and sparsity loss
-        mse_loss, sparsity_loss = sae_loss(
-            acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True
-        )
-        out["mse_loss"] = mse_loss.item() ** 2  # / acts.norm(dim=-1).mean().item() ** 2
-        out["sparsity_loss"] = sparsity_loss.item()
+        l2_loss, l1_loss, l0 = sae_loss(dictionary, acts)
+        out["l2_loss"] = l2_loss.item()
+        out["l1_loss"] = l1_loss.item()
+        out["l0"] = l0.item()
 
         # compute variance explained
         total_variance = t.var(acts, dim=0).sum()
         residual_variance = t.var(acts - dictionary(acts), dim=0).sum()
         out["variance_explained"] = (1 - residual_variance / total_variance).item()
 
-        # compute mean L0 norm and percentage of neurons alive
-        features = dictionary.encode(acts)
-        actives = features != 0
-        out["l0"] = actives.float().sum(dim=-1).mean().item()
-        alives = actives.any(dim=0)
-        out["percent_alive"] = alives.float().mean().item()
+        # # compute mean L0 norm and percentage of neurons alive
+        # alives = actives.any(dim=0)
+        # out["percent_alive"] = alives.float().mean().item()
 
         # compute histogram if needed
         if hist_save_path is not None:
