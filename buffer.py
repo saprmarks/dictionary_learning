@@ -17,7 +17,7 @@ class ActivationBuffer:
                  data, # generator which yields text data
                  model : LanguageModel, # LanguageModel from which to extract activations
                  submodule, # submodule of the model from which to extract activations
-                 n_feats=None, # number of features in the submodule; if None, try to detect automatically
+                 d_submodule=None, # submodule dimension; if None, try to detect automatically
                  io='out', # can be 'in' or 'out'; whether to extract input or output activations
                  n_ctxs=3e4, # approximate number of contexts to store in the buffer
                  ctx_len=128, # length of each context
@@ -29,21 +29,22 @@ class ActivationBuffer:
         if io not in ['in', 'out']:
             raise ValueError("io must be either 'in' or 'out'")
 
-        if n_feats is None:
+        if d_submodule is None:
             try:
                 if io == 'in':
-                    n_feats = submodule.in_features
+                    d_submodule = submodule.in_features
                 else:
-                    n_feats = submodule.out_features
+                    d_submodule = submodule.out_features
             except:
-                raise ValueError("n_feats cannot be inferred and must be specified directly")
-        self.activations = t.empty(0, n_feats, device=device)
+                raise ValueError("d_submodule cannot be inferred and must be specified directly")
+        self.activations = t.empty(0, d_submodule, device=device)
 
         self.read = t.zeros(0).bool()
 
         self.data = data
         self.model = model
         self.submodule = submodule
+        self.d_submodule = d_submodule
         self.io = io
         self.n_ctxs = n_ctxs
         self.ctx_len = ctx_len

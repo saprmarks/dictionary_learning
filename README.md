@@ -69,7 +69,7 @@ buffer = ActivationBuffer(
     data,
     model,
     submodule,
-    submodule_output_dim=activation_dim, # output dimension of the model component
+    d_submodule=activation_dim, # output dimension of the model component
     n_ctxs=3e4, # you can set this higher or lower dependong on your available memory
     device='cuda:0' # doesn't have to be the same device that you train your autoencoder on
 ) # buffer will return batches of tensors of dimension = submodule's output dimension
