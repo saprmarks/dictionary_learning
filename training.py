@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 from .trainers.standard import StandardTrainer
 import wandb
-from .evaluation import sae_loss
+from .evaluation import evaluate
 
 def _set_seeds(seed):
     if seed is not None:
@@ -64,28 +64,51 @@ def trainSAE(
         if steps is not None and step >= steps:
             break
         
-        for i, trainer in enumerate(trainers):
-            # logging
-            if log_steps is not None and step % log_steps == 0:
-                with t.no_grad():
-                    l2_loss, l1_loss, l0 = sae_loss(trainer.ae, activations)
-                wandb.log(
-                    {
-                        f"trainer{i}/l2_loss" : l2_loss,
-                        f"trainer{i}/l1_loss" : l1_loss,
-                        f"trainer{i}/l0" : l0,
-                    }
-                )
+        # logging
+        if log_steps is not None and step % log_steps == 0:
+            log = {}
+            for i, trainer in enumerate(trainers):
+                x_hat, f = trainer.ae(activations, output_features=True)
+                l2_loss = t.linalg.norm(activations - x_hat, dim=-1).mean()
+                l1_loss = f.norm(p=1, dim=-1).mean()
+                l0 = (f != 0).float().sum(dim=-1).mean()
+                frac_alive = (f != 0).float().mean(dim=-1).mean()
 
-            # saving
-            if save_steps is not None and save_dirs[i] is not None and step % save_steps == 0:
-                if not os.path.exists(os.path.join(save_dirs[i], "checkpoints")):
-                    os.mkdir(os.path.join(save_dirs[i], "checkpoints"))
-                t.save(
-                    trainer.ae.state_dict(), 
-                    os.path.join(save_dirs[i], "checkpoints", f"ae_{step}.pt")
-                    )
-                
+                #compute variance explained
+                total_variance = t.var(activations, dim=0).sum()
+                residual_variance = t.var(activations - x_hat, dim=0).sum()
+                frac_variance_explained = (1 - residual_variance / total_variance)
+
+                log[f'trainer{i}/l2_loss'] = l2_loss.item()
+                log[f'trainer{i}/l1_loss'] = l1_loss.item()
+                log[f'trainer{i}/l0'] = l0.item()
+                log[f'trainer{i}/frac_alive'] = frac_alive.item()
+                log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
+
+                # TODO get this to work
+                # metrics = evaluate(
+                #     trainer.ae, 
+                #     data, 
+                #     device=trainer.device
+                # )
+                # log.update(
+                #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
+                # )
+            wandb.log(log)
+
+        # saving
+        if save_steps is not None and step % save_steps == 0:
+            for i, trainer in enumerate(trainers):
+                if save_dirs[i] is not None:
+                    if not os.path.exists(os.path.join(save_dirs[i], "checkpoints")):
+                        os.mkdir(os.path.join(save_dirs[i], "checkpoints"))
+                    t.save(
+                        trainer.ae.state_dict(), 
+                        os.path.join(save_dirs[i], "checkpoints", f"ae_{step}.pt")
+                        )
+                    
+        # training
+        for trainer in trainers:
             trainer.update(step, activations)
     
     # save final SAEs
