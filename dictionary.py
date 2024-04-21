@@ -77,6 +77,18 @@ class AutoEncoder(Dictionary, nn.Module):
             else:
                 return x_hat, x_ghost
             
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = AutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+            
 class IdentityDict(Dictionary, nn.Module):
     """
     An identity dictionary, i.e. the identity function.
