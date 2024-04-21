@@ -17,15 +17,12 @@ To use `dictionary_learning`, include it as a subdirectory in some project's dir
 
 # Using trained dictionaries
 
-To use a dictionary, just import the dictionary class (currently only autoencoders are supported), initialize an `AutoEncoder`, and load a saved state_dict (see a description for downloading our pretrained dictionaries below).
+You can load and used a pretrained dictionary as follows
 ```python
 from dictionary_learning import AutoEncoder
-import torch
 
-activation_dim = 512 # dimension of the NN's activations to be autoencoded
-dictionary_size = 16 * activation_dim # number of features in the dictionary
-ae = AutoEncoder(activation_dim, dictionary_size)
-ae.load_state_dict(torch.load("path/to/dictionary/weights"))
+# load autoencoder
+ae = AutoEncoder.from_pretrained("path/to/dictionary/weights")
 
 # get NN activations using your preferred method: hooks, transformer_lens, nnsight, etc. ...
 # for now we'll just use random activations
@@ -33,10 +30,11 @@ activations = torch.randn(64, activation_dim)
 features = ae.encode(activations) # get features from activations
 reconstructed_activations = ae.decode(features)
 
-# if you want to use both the features and the reconstruction, you can get both at once
+# you can also just get the reconstruction ...
+reconstructed_activations = ae(activations)
+# ... or get the features and reconstruction at the same time
 reconstructed_activations, features = ae(activations, output_features=True)
 ```
-
 Dictionaries have `encode`, `decode`, and `forward` methods -- see `dictionary.py`.
 
 # Training your own dictionaries
