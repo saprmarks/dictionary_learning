@@ -4,7 +4,6 @@ import torch as t
 Implements the standard SAE training scheme.
 """
 
-from ..dictionary import AutoEncoder
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 
@@ -72,6 +71,7 @@ class StandardTrainer(SAETrainer):
     def resample_neurons(self, deads, activations):
         with t.no_grad():
             if deads.sum() == 0: return
+            print(f"resampling {deads.sum().item()} neurons")
 
             # compute loss for each activation
             losses = (activations - self.ae(activations)).norm(dim=-1)
@@ -97,7 +97,8 @@ class StandardTrainer(SAETrainer):
             state_dict[2]['exp_avg'][deads] = 0.
             state_dict[2]['exp_avg_sq'][deads] = 0.
             ## decoder weight
-            # TODO fill this in
+            state_dict[3]['exp_avg'][:,deads] = 0.
+            state_dict[3]['exp_avg_sq'][:,deads] = 0.
     
     def loss(self, x):
         x_hat, f = self.ae(x, output_features=True)
@@ -122,5 +123,5 @@ class StandardTrainer(SAETrainer):
         self.optimizer.step()
         self.scheduler.step()
 
-        if self.resample_steps is not None and step % self.resample_steps == -1:
-            self.resample_neurons(self.steps_since_active > self.resample_steps, activations)
+        if self.resample_steps is not None and step % self.resample_steps == self.resample_steps - 1:
+            self.resample_neurons(self.steps_since_active > self.resample_steps / 2, activations)

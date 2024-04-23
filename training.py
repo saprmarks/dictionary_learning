@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 from .trainers.standard import StandardTrainer
 import wandb
-from .evaluation import evaluate
+# from .evaluation import evaluate
 
 def _set_seeds(seed):
     if seed is not None:
@@ -42,11 +42,12 @@ def trainSAE(
     for save_dir in save_dirs:
         if save_dir is not None and not os.path.exists(save_dir):
             os.mkdir(save_dir)
-    
-    wandb.init(
-        project="dictionary_learning",
-        config={f'trainer{i}' : config for i, config in enumerate(trainer_configs)}
-    )
+    if log_steps is not None:
+        wandb.init(
+            entity="sae-training",
+            project="sae-training",
+            config={f'trainer{i}' : config for i, config in enumerate(trainer_configs)}
+        )
 
     trainers = []
     for config in trainer_configs:
