@@ -31,7 +31,7 @@ class AutoEncoder(Dictionary, nn.Module):
     """
     A one-layer autoencoder.
     """
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, activation_func='relu'):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -44,8 +44,20 @@ class AutoEncoder(Dictionary, nn.Module):
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
 
+        self.set_activation_func(activation_func)
+
+    def set_activation_func(self, activation_func):
+        if activation_func == 'relu':
+            self.activation_func = 'relu'
+            self.non_linearity = lambda a : nn.ReLU()(a)
+        elif activation_func == 'quadratic':
+            self.activation_func == 'quadratic'
+            self.non_linearity = lambda a : t.square(a)
+        else:
+            raise NotImplementedError("Unknown SAE non-linearity")
+
     def encode(self, x):
-        return nn.ReLU()(self.encoder(x - self.bias))
+        return self.non_linearity(self.encoder(x - self.bias))
     
     def decode(self, f):
         return self.decoder(f) + self.bias
@@ -68,7 +80,7 @@ class AutoEncoder(Dictionary, nn.Module):
         else: # ghost mode
             f_pre = self.encoder(x - self.bias)
             f_ghost = t.exp(f_pre) * ghost_mask.to(f_pre)
-            f = nn.ReLU()(f_pre)
+            f = self.non_linearity(f_pre)
 
             x_ghost = self.decoder(f_ghost) # note that this only applies the decoder weight matrix, no bias
             x_hat = self.decode(f)
