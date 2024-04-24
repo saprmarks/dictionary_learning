@@ -117,6 +117,14 @@ def evaluate(
         l0 = (f != 0).float().sum(dim=-1).mean()
         frac_alive = (f != 0).float().mean(dim=-1).mean()
 
+        # cosine similarity between x and x_hat
+        x_normed = x / t.linalg.norm(x, dim=-1, keepdim=True)
+        x_hat_normed = x_hat / t.linalg.norm(x_hat, dim=-1, keepdim=True)
+        cossim = (x_normed * x_hat_normed).sum(dim=-1).mean()
+
+        # l2 ratio
+        l2_ratio = (t.linalg.norm(x_hat, dim=-1) / t.linalg.norm(x, dim=-1)).mean()
+
         #compute variance explained
         total_variance = t.var(x, dim=0).sum()
         residual_variance = t.var(x - x_hat, dim=0).sum()
@@ -127,6 +135,8 @@ def evaluate(
         out["l0"] = l0.item()
         out["frac_alive"] = frac_alive.item()
         out["frac_variance_explained"] = frac_variance_explained.item()
+        out["cossim"] = cossim.item()
+        out["l2_ratio"] = l2_ratio.item()
 
         if not isinstance(activations, ActivationBuffer):
             return out
