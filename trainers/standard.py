@@ -45,7 +45,7 @@ class StandardTrainer(SAETrainer):
         self.warmup_steps = warmup_steps
 
         if device is None:
-            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+            self.device = 'cuda' if t.cuda.is_available() else 'cpu'
         else:
             self.device = device
         self.ae.to(self.device)
@@ -81,11 +81,14 @@ class StandardTrainer(SAETrainer):
             indices = t.multinomial(losses, num_samples=n_resample, replacement=False)
             sampled_vecs = activations[indices]
 
-            # reset encoder/decoder weights for dead neurons
+            # get norm of the living neurons
             alive_norm = self.ae.encoder.weight[~deads].norm(dim=-1).mean()
-            self.ae.encoder.weight[deads][:n_resample] = sampled_vecs * alive_norm * 0.2
-            self.ae.decoder.weight[:,deads][:,:n_resample] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
-            self.ae.encoder.bias[deads][:n_resample] = 0.
+
+            # resample first n_resample dead neurons
+            deads[deads.nonzero()[n_resample:]] = False
+            self.ae.encoder.weight[deads] = sampled_vecs * alive_norm * 0.2
+            self.ae.decoder.weight[:,deads] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
+            self.ae.encoder.bias[deads] = 0.
 
 
             # reset Adam parameters for dead neurons
@@ -123,5 +126,16 @@ class StandardTrainer(SAETrainer):
         self.optimizer.step()
         self.scheduler.step()
 
-        if self.resample_steps is not None and step % self.resample_steps == self.resample_steps - 1:
+        if self.resample_steps is not None and step % self.resample_steps == 0:
             self.resample_neurons(self.steps_since_active > self.resample_steps / 2, activations)
+
+    @property
+    def config(self):
+        return {
+            'trainer_class' : 'StandardTrainer',
+            'lr' : self.lr,
+            'l1_penalty' : self.l1_penalty,
+            'warmup_steps' : self.warmup_steps,
+            'resample_steps' : self.resample_steps,
+            'device' : self.device
+        }
