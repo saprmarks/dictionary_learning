@@ -2,7 +2,6 @@
 Utilities for evaluating dictionaries on a model and dataset.
 """
 
-import matplotlib.pyplot as plt
 import torch as t
 from .buffer import ActivationBuffer
 from nnsight import LanguageModel
@@ -41,7 +40,7 @@ def loss_recovered(
             else:
                 submodule.input = dictionary(x)
         elif io == 'out':
-            x = submodule.output[0]
+            x = submodule.output
             if isinstance(x, tuple):
                 submodule.output[0][:] = dictionary(x[0])
             else:
@@ -59,7 +58,7 @@ def loss_recovered(
             else:
                 submodule.input = t.zeros_like(x)
         elif io == 'out':
-            x = submodule.output[0]
+            x = submodule.output
             if isinstance(x, tuple):
                 submodule.output[0][:] = t.zeros_like(x[0])
             else:
@@ -142,8 +141,6 @@ def evaluate(
             io=io,
         )
         frac_recovered = (loss_reconstructed - loss_zero) / (loss_original - loss_zero)
-
-
         
         out["loss_original"] = loss_original.item()
         out["loss_reconstructed"] = loss_reconstructed.item()
