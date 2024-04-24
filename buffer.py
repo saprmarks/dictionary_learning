@@ -116,6 +116,18 @@ class ActivationBuffer:
             self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
             self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
 
+    @property
+    def config(self):
+        return {
+            'd_submodule' : self.d_submodule,
+            'io' : self.io,
+            'n_ctxs' : self.n_ctxs,
+            'ctx_len' : self.ctx_len,
+            'refresh_batch_size' : self.refresh_batch_size,
+            'out_batch_size' : self.out_batch_size,
+            'device' : self.device
+        }
+
     def close(self):
         """
         Close the text stream and the underlying compressed file.
