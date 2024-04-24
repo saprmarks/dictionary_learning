@@ -8,6 +8,7 @@ import os
 from tqdm import tqdm
 from .trainers.standard import StandardTrainer
 import wandb
+import json
 # from .evaluation import evaluate
 
 def _set_seeds(seed):
@@ -30,24 +31,22 @@ def trainSAE(
         ],
         steps=None,
         save_steps=None,
-        save_dirs=[None],
+        save_dir=None, # use {run} to refer to wandb run
         log_steps=None,
         seed=None,
 ):
     """
     Train SAEs using the given trainers
     """
-
-    # make save_dirs if they don't already exist
-    for save_dir in save_dirs:
-        if save_dir is not None and not os.path.exists(save_dir):
-            os.mkdir(save_dir)
     if log_steps is not None:
         wandb.init(
             entity="sae-training",
             project="sae-training",
             config={f'trainer{i}' : config for i, config in enumerate(trainer_configs)}
         )
+        # process save_dir in light of run name
+        if save_dir is not None:
+            save_dir = save_dir.format(run=wandb.run.name)
 
     trainers = []
     for config in trainer_configs:
@@ -60,6 +59,21 @@ def trainSAE(
                 **config
             )
         )
+
+    # make save dirs, export config
+    if save_dir is not None:
+        save_dirs = [os.path.join(save_dir, f"trainer{i}") for i in range(len(trainer_configs))]
+        for trainer, dir in zip(trainers, save_dirs):
+            os.makedirs(dir, exist_ok=True)
+            # save config
+            config = {'trainer' : trainer.config}
+            try:
+                config['buffer'] = data.config
+            except: pass
+            with open(os.path.join(dir, "config.json"), 'w') as f:
+                json.dump(config, f, indent=4)
+    else:
+        save_dirs = [None for _ in trainer_configs]
     
     for step, activations in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
@@ -95,17 +109,17 @@ def trainSAE(
                 # log.update(
                 #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
                 # )
-            wandb.log(log)
+            wandb.log(log, step=step)
 
         # saving
         if save_steps is not None and step % save_steps == 0:
-            for i, trainer in enumerate(trainers):
-                if save_dirs[i] is not None:
-                    if not os.path.exists(os.path.join(save_dirs[i], "checkpoints")):
-                        os.mkdir(os.path.join(save_dirs[i], "checkpoints"))
+            for dir, trainer in zip(save_dirs, trainers):
+                if dir is not None:
+                    if not os.path.exists(os.path.join(dir, "checkpoints")):
+                        os.mkdir(os.path.join(dir, "checkpoints"))
                     t.save(
                         trainer.ae.state_dict(), 
-                        os.path.join(save_dirs[i], "checkpoints", f"ae_{step}.pt")
+                        os.path.join(dir, "checkpoints", f"ae_{step}.pt")
                         )
                     
         # training
