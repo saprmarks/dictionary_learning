@@ -124,26 +124,33 @@ def resample_neurons(deads, activations, ae, optimizer):
         # compute the loss for each activation vector
         losses = (out_acts - ae(in_acts)).norm(dim=-1)
 
-        # sample inputs to create encoder/decoder weights from
+        # sample input to create encoder/decoder weights from
         n_resample = min([deads.sum(), losses.shape[0]])
         indices = t.multinomial(losses, num_samples=n_resample, replacement=False)
-        sampled_vecs = out_acts[indices]
+        sampled_vecs = activations[indices]
 
+        # get norm of the living neurons
         alive_norm = ae.encoder.weight[~deads].norm(dim=-1).mean()
-        ae.encoder.weight[deads][:n_resample] = sampled_vecs * alive_norm * 0.2
-        ae.decoder.weight[:,deads][:,:n_resample] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
-        # reset bias vectors for dead neurons
-        ae.encoder.bias[deads][:n_resample] = 0.
+
+        # resample first n_resample dead neurons
+        deads[deads.nonzero()[n_resample:]] = False
+        ae.encoder.weight[deads] = sampled_vecs * alive_norm * 0.2
+        ae.decoder.weight[:,deads] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
+        ae.encoder.bias[deads] = 0.
 
         # reset Adam parameters for dead neurons
         state_dict = optimizer.state_dict()['state']
-        # # encoder weight
+        ## encoder weight
         state_dict[1]['exp_avg'][deads] = 0.
         state_dict[1]['exp_avg_sq'][deads] = 0.
-        # # encoder bias
+        ## encoder bias
         state_dict[2]['exp_avg'][deads] = 0.
         state_dict[2]['exp_avg_sq'][deads] = 0.
+        ## decoder weight
+        state_dict[3]['exp_avg'][:,deads] = 0.
+        state_dict[3]['exp_avg_sq'][:,deads] = 0.
 
+        
 
 def trainSAE(
         activations, # a generator that outputs batches of activations
