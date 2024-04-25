@@ -39,6 +39,7 @@ class PAnnealTrainer(SAETrainer):
                  sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  p_start=1, # starting value of p (constant throughout warmup)
                  p_end=0.5, # annealing p_start to p_end linearly after warmup_steps
+                 steps_before_annealing=1000, # number of steps before starting to anneal p, should be >= to warmup_steps, < resample_steps/steps
                  warmup_steps=1000, # lr warmup period at start of training and after each resample
                  resample_steps=None, # number of steps after which to resample dead neurons
                  steps=None, # total number of steps to train for
@@ -52,6 +53,7 @@ class PAnnealTrainer(SAETrainer):
         self.p = None # p is set in self.loss()
         self.lp_loss = None # lp_loss is set in self.loss()
         self.sparsity_penalty=sparsity_penalty
+        self.steps_before_annealing = steps_before_annealing
         self.warmup_steps = warmup_steps
         self.steps = steps
         self.logging_parameters = ['p', 'lp_loss']
@@ -91,6 +93,7 @@ class PAnnealTrainer(SAETrainer):
             'sparsity_penalty' : self.sparsity_penalty,
             'p_start' : self.p_start,
             'p_end' : self.p_end,
+            'steps_before_annealing' : self.steps_before_annealing,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'steps' : self.steps,
@@ -134,7 +137,7 @@ class PAnnealTrainer(SAETrainer):
 
         if self.resample_steps:
             step = step % self.resample_steps
-        if step < self.warmup_steps: # if in warmup
+        if step < self.steps_before_annealing:
             self.p = self.p_start
         else:
             relative_progress = (step - self.warmup_steps) / self.steps_after_warmup
