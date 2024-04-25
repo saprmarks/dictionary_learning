@@ -6,6 +6,7 @@ Implements the standard SAE training scheme.
 
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
+from ..dictionary import AutoEncoder
 
 class ConstrainedAdam(t.optim.Adam):
     """
@@ -31,15 +32,26 @@ class StandardTrainer(SAETrainer):
     """
     Standard SAE training scheme.
     """
-    def __init__(self, 
-                 ae, 
+    def __init__(self,
+                 dict_class=AutoEncoder,
+                 activation_dim=512,
+                 dict_size=64*512,
                  lr=1e-3, 
                  l1_penalty=1e-1,
                  warmup_steps=1000, # lr warmup period at start of training and after each resample
                  resample_steps=None, # how often to resample neurons
+                 seed=None,
                  device=None,
     ):
-        super().__init__(ae)
+        super().__init__(seed)
+
+        if seed is not None:
+            t.manual_seed(seed)
+            t.cuda.manual_seed_all(seed)
+
+        # initialize dictionary
+        self.ae = dict_class(activation_dim, dict_size)
+
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
@@ -55,11 +67,11 @@ class StandardTrainer(SAETrainer):
 
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
-            self.steps_since_active = t.zeros(ae.dict_size, dtype=int).to(self.device)
+            self.steps_since_active = t.zeros(self.ae.dict_size, dtype=int).to(self.device)
         else:
             self.steps_since_active = None 
 
-        self.optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
+        self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
         if resample_steps is None:
             def warmup_fn(step):
                 return min(step / warmup_steps, 1.)
