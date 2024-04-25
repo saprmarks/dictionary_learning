@@ -84,10 +84,8 @@ class PAnnealTrainer(SAETrainer):
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
             self.steps_since_active = t.zeros(self.dict_size, dtype=int).to(self.device)
-            self.steps_while_annealing = self.resample_steps - self.anneal_start
         else:
             self.steps_since_active = None 
-            self.steps_while_annealing = steps - self.anneal_start
 
         self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
         if resample_steps is None:
@@ -102,6 +100,9 @@ class PAnnealTrainer(SAETrainer):
     def config(self):
         return {
             'trainer_class' : "PAnnealTrainer",
+            'dict_class' : AutoEncoder,
+            'activation_dim' : self.activation_dim,
+            'dict_size' : self.dict_size,
             'lr' : self.lr,
             'sparsity_function' : self.sparsity_function,
             'sparsity_penalty' : self.sparsity_penalty,
@@ -149,10 +150,8 @@ class PAnnealTrainer(SAETrainer):
     def loss(self, x, step):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-        if self.resample_steps:
-            step = step % self.resample_steps
-            
-        relative_progress = max(step - self.anneal_start, 0) / self.steps_while_annealing
+   
+        relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
         self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
         if self.sparsity_function == 'Lp':
             self.lp_loss = f.norm(p=self.p, dim=-1).mean()
