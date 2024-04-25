@@ -100,6 +100,11 @@ def trainSAE(
                 log[f'trainer{i}/frac_alive'] = frac_alive.item()
                 log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
 
+                # log parameters from training 
+                trainer_log = trainer.get_logging_parameters()
+                for name, value in trainer_log.items():
+                    log[f'trainer{i}/{name}'] = value
+
                 # TODO get this to work
                 # metrics = evaluate(
                 #     trainer.ae, 
