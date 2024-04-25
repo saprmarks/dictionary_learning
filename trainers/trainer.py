@@ -2,8 +2,8 @@ class SAETrainer:
     """
     Generic class for implementing SAE training algorithms
     """
-    def __init__(self, ae):
-        self.ae = ae
+    def __init__(self, seed=None):
+        self.seed = seed
         self.logging_parameters = []
 
     def update(self, 

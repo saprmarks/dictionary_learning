@@ -11,18 +11,14 @@ import wandb
 import json
 # from .evaluation import evaluate
 
-def _set_seeds(seed):
-    if seed is not None:
-        t.manual_seed(seed)
-        t.cuda.manual_seed_all(seed)
-
 def trainSAE(
         data, 
-        activation_dim,
-        dictionary_size,
         trainer_configs = [
             {
                 'trainer' : StandardTrainer,
+                'dict_class' : AutoEncoder,
+                'activation_dim' : 512,
+                'dictionary_size' : 64*512,
                 'lr' : 1e-3,
                 'l1_penalty' : 1e-1,
                 'warmup_steps' : 1000,
@@ -33,7 +29,6 @@ def trainSAE(
         save_steps=None,
         save_dir=None, # use {run} to refer to wandb run
         log_steps=None,
-        seed=None,
 ):
     """
     Train SAEs using the given trainers
@@ -52,10 +47,8 @@ def trainSAE(
     for config in trainer_configs:
         trainer = config['trainer']
         del config['trainer']
-        _set_seeds(seed)
         trainers.append(
             trainer(
-                AutoEncoder(activation_dim, dictionary_size),
                 **config
             )
         )
