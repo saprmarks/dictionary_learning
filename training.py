@@ -29,7 +29,6 @@ def trainSAE(
         save_steps=None,
         save_dir=None, # use {run} to refer to wandb run
         log_steps=None,
-        seed=None,
 ):
     """
     Train SAEs using the given trainers
