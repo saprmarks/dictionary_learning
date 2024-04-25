@@ -4,6 +4,7 @@ import torch as t
 Implements the standard SAE training scheme.
 """
 
+from ..dictionary import AutoEncoder
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 
@@ -33,7 +34,9 @@ class PAnnealTrainer(SAETrainer):
     You can further choose to use Lp or Lp^p sparsity.
     """
     def __init__(self, 
-                 ae, 
+                 dict_class=AutoEncoder,
+                 activation_dim=512,
+                 dict_size=64*512, 
                  lr=1e-3, 
                  sparsity_function='Lp', # Lp or Lp^p
                  sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
@@ -44,8 +47,18 @@ class PAnnealTrainer(SAETrainer):
                  resample_steps=None, # number of steps after which to resample dead neurons
                  steps=None, # total number of steps to train for
                  device=None,
+                 seed=None,
     ):
-        super().__init__(ae)
+        super().__init__(seed)
+
+        if seed is not None:
+            t.manual_seed(seed)
+            t.cuda.manual_seed_all(seed)
+
+        # initialize dictionary
+        self.ae = dict_class(activation_dim, dict_size)
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
         self.lr = lr
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
@@ -57,6 +70,7 @@ class PAnnealTrainer(SAETrainer):
         self.warmup_steps = warmup_steps
         self.steps = steps
         self.logging_parameters = ['p', 'lp_loss']
+        self.seed = seed
 
         if device is None:
             self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
@@ -69,13 +83,13 @@ class PAnnealTrainer(SAETrainer):
 
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
-            self.steps_since_active = t.zeros(ae.dict_size, dtype=int).to(self.device)
+            self.steps_since_active = t.zeros(self.dict_size, dtype=int).to(self.device)
             self.steps_while_annealing = self.resample_steps - self.anneal_start
         else:
             self.steps_since_active = None 
             self.steps_while_annealing = steps - self.anneal_start
 
-        self.optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
+        self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
         if resample_steps is None:
             def warmup_fn(step):
                 return min(step / warmup_steps, 1.)
@@ -93,10 +107,11 @@ class PAnnealTrainer(SAETrainer):
             'sparsity_penalty' : self.sparsity_penalty,
             'p_start' : self.p_start,
             'p_end' : self.p_end,
-            'steps_before_annealing' : self.steps_before_annealing,
+            'anneal_start' : self.anneal_start,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'steps' : self.steps,
+            'seed' : self.seed,
         }
 
     def resample_neurons(self, deads, activations):
@@ -134,14 +149,11 @@ class PAnnealTrainer(SAETrainer):
     def loss(self, x, step):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-
         if self.resample_steps:
             step = step % self.resample_steps
-        if step < self.steps_before_annealing:
-            self.p = self.p_start
-        else:
-            relative_progress = (step - self.anneal_start) / self.steps_while_annealing
-            self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
+            
+        relative_progress = max(step - self.anneal_start, 0) / self.steps_while_annealing
+        self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
         if self.sparsity_function == 'Lp':
             self.lp_loss = f.norm(p=self.p, dim=-1).mean()
         elif self.sparsity_function == 'Lp^p':
