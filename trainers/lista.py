@@ -54,7 +54,7 @@ class ListaTrainer(SAETrainer):
         self.warmup_steps = warmup_steps
 
         if device is None:
-            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+            self.device = 'cuda' if t.cuda.is_available() else 'cpu'
         else:
             self.device = device
         self.ae.to(self.device)
@@ -185,3 +185,14 @@ class ListaTrainer(SAETrainer):
 
         if self.resample_steps is not None and step % self.resample_steps == -1:
             self.resample_neurons(self.steps_since_active > self.resample_steps, activations)
+
+    @property
+    def config(self):
+        return {
+            'trainer_class' : 'ListaTrainer',
+            'lr' : self.lr,
+            'sparsity_coefficient' : self.sparsity_coefficient,
+            'warmup_steps' : self.warmup_steps,
+            'resample_steps' : self.resample_steps,
+            'device' : self.device
+        }
