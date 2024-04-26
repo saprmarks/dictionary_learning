@@ -1,9 +1,7 @@
-import torch as t
-
 """
 Implements the standard SAE training scheme.
 """
-
+import torch as t
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import AutoEncoder
