@@ -120,6 +120,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         self.dict_size = dict_size
         self.decoder_bias = nn.Parameter(t.zeros(activation_dim))
         self.encoder = nn.Linear(activation_dim, dict_size, bias=False)
+        self.r_mag = nn.Parameter(t.zeros(dict_size))
         self.gate_bias = nn.Parameter(t.zeros(dict_size))
         self.mag_bias = nn.Parameter(t.zeros(dict_size))
 
@@ -139,7 +140,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             f_gate = (pi_gate > 0).float()
 
             # magnitude network
-            pi_mag = self.encoder(x - self.decoder_bias) + self.mag_bias
+            pi_mag = self.r_mag.exp() * self.encoder(x - self.decoder_bias) + self.mag_bias
             f_mag = nn.ReLU()(pi_mag)
 
             return f_gate * f_mag
