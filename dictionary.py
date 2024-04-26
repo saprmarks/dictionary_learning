@@ -159,3 +159,48 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
+
+# TODO merge this with AutoEncoder
+class AutoEncoderNew(Dictionary, nn.Module):
+    """
+    The autoencoder architecture and initialization used in https://transformer-circuits.pub/2024/april-update/index.html#training-saes
+    """
+    def __init__(self, activation_dim, dict_size):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=True)
+
+        # initialize encoder and decoder weights
+        w = t.randn(activation_dim, dict_size)
+        ## normalize columns of w
+        w = w / w.norm(dim=0, keepdim=True) * 0.1
+        ## set encoder and decoder weights
+        self.encoder.weight = nn.Parameter(w.clone())
+        self.decoder.weight = nn.Parameter(w.clone().T)
+
+    def encode(self, x):
+        return nn.ReLU()(self.encoder(x))
+    
+    def decode(self, f):
+        return self.decoder(f)
+    
+    def forward(self, x):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        """
+        return self.decode(self.encode(x))
+            
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = AutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
