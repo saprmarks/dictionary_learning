@@ -109,3 +109,52 @@ class IdentityDict(Dictionary, nn.Module):
             return x, x
         else:
             return x
+        
+class GatedAutoEncoder(Dictionary, nn.Module):
+    """
+    An autoencoder with separate gating and magnitude networks.
+    """
+    def __init__(self, activation_dim, dict_size):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.decoder_bias = nn.Parameter(t.zeros(activation_dim))
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=False)
+        self.gate_bias = nn.Parameter(t.zeros(dict_size))
+        self.mag_bias = nn.Parameter(t.zeros(dict_size))
+
+        # rows of decoder weight matrix are unit vectors
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
+
+    def encode(self, x, gate_only=False):
+        """
+        If gate_only is True, instead return ReLU(gating preactivations)
+        """
+        if not gate_only:
+            # gating network
+            pi_gate = self.encoder(x - self.decoder_bias) + self.gate_bias
+            f_gate = (pi_gate > 0).float()
+
+            # magnitude network
+            pi_mag = self.encoder(x - self.decoder_bias) + self.mag_bias
+            f_mag = nn.ReLU()(pi_mag)
+
+            return f_gate * f_mag
+        else:
+            # only gating network
+            pi_gate = self.encoder(x - self.decoder_bias) + self.gate_bias
+            return nn.ReLU()(pi_gate)
+
+    def decode(self, f):
+        return self.decoder(f) + self.decoder_bias
+    
+    def forward(self, x, output_features=False, gate_only=False):
+        f = self.encode(x, gate_only=gate_only)
+        x_hat = self.decode(f)
+        if output_features:
+            return x_hat, f
+        else:
+            return x_hat
