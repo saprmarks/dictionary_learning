@@ -16,6 +16,7 @@ class StandardTrainerNew(SAETrainer):
                  dict_size=64*512,
                  lr=5e-5, 
                  l1_penalty=1e-1,
+                 lambda_warm_steps=1500, # steps over which to warm up the l1 penalty
                  decay_start=24000, # when does the lr decay start
                  steps=30000, # when when does training end
                  seed=None,
@@ -32,6 +33,9 @@ class StandardTrainerNew(SAETrainer):
 
         self.lr = lr
         self.l1_penalty=l1_penalty
+        self.lambda_warm_steps=lambda_warm_steps
+        self.decay_start=decay_start
+        self.steps = steps
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
@@ -48,22 +52,21 @@ class StandardTrainerNew(SAETrainer):
                 return (steps - step) / (steps - decay_start)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
-    def loss(self, x):
-        f = self.ae.encode(x)
-        x_hat = self.ae.decode(f)
-        # multiply f by decoder column norms
-        f = f * self.ae.decoder.weight.norm(dim=0, keepdim=True)
+    def loss(self, step, x):
+        x_hat, f = self.ae(x, output_features=True)
+
+        l1_penalty = min(1., step / self.lambda_warm_steps) * self.l1_penalty
 
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
         L_sparse = f.norm(p=1, dim=-1).mean()
-        return L_recon + self.l1_penalty * L_sparse
+        return L_recon + l1_penalty * L_sparse
 
     def update(self, step, x):
         x = x.to(self.device)
         x = x / x.norm(dim=-1, keepdim=True).mean() * (self.ae.activation_dim ** 0.5)
 
         self.optimizer.zero_grad()
-        loss = self.loss(x)
+        loss = self.loss(step, x)
         loss.backward()
 
         # clip grad norm
@@ -75,9 +78,15 @@ class StandardTrainerNew(SAETrainer):
     @property
     def config(self):
         return {
-            'trainer_class' : 'StandardTrainer',
+            'trainer_class' : 'StandardTrainerNew',
+            'dict_class' : 'AutoEncoderNew',
             'lr' : self.lr,
             'l1_penalty' : self.l1_penalty,
-            'warmup_steps' : self.warmup_steps,
+            'lambda_warm_steps' : self.lambda_warm_steps,
+            'decay_start' : self.decay_start,
+            'steps' : self.steps,
+            'seed' : self.seed,
+            'activation_dim' : self.ae.activation_dim,
+            'dict_size' : self.ae.dict_size,
             'device' : self.device
         }

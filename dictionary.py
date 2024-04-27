@@ -177,8 +177,8 @@ class AutoEncoderNew(Dictionary, nn.Module):
         ## normalize columns of w
         w = w / w.norm(dim=0, keepdim=True) * 0.1
         ## set encoder and decoder weights
-        self.encoder.weight = nn.Parameter(w.clone())
-        self.decoder.weight = nn.Parameter(w.clone().T)
+        self.encoder.weight = nn.Parameter(w.clone().T)
+        self.decoder.weight = nn.Parameter(w.clone())
 
     def encode(self, x):
         return nn.ReLU()(self.encoder(x))
@@ -186,12 +186,19 @@ class AutoEncoderNew(Dictionary, nn.Module):
     def decode(self, f):
         return self.decoder(f)
     
-    def forward(self, x):
+    def forward(self, x, output_features=False):
         """
         Forward pass of an autoencoder.
         x : activations to be autoencoded
         """
-        return self.decode(self.encode(x))
+        if not output_features:
+            return self.decode(self.encode(x))
+        else: # TODO rewrite so that x_hat depends on f
+            f = self.encode(x)
+            x_hat = self.decode(f)
+            # multiply f by decoder column norms
+            f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+            return x_hat, f
             
     def from_pretrained(path, device=None):
         """
