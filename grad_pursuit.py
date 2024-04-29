@@ -28,7 +28,7 @@ def _grad_pursuit_update_step(signal, weights, dictionary, selected_features):
     return weights
 
 @t.jit.script
-def grad_pursuit(signal, dictionary, target_l0=20, device='cpu'):
+def grad_pursuit(signal, dictionary, target_l0 : int = 20, device='cpu'):
     """
     Inputs: signal: b x d, dictionary: d x n, target_l0: int, device: str
     Outputs: weights: b x n
