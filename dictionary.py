@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 import torch as t
 import torch.nn as nn
 
+from .grad_pursuit import grad_pursuit
+
 class Dictionary(ABC):
     """
     A dictionary consists of a collection of vectors, an encoder, and a decoder.
@@ -204,6 +206,59 @@ class AutoEncoderNew(Dictionary, nn.Module):
         """
         Load a pretrained autoencoder from a file.
         """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = AutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+
+
+class GradPursuitAutoEncoder(Dictionary, nn.Module):
+    """
+    Uses gradient pursuit as encoder.
+    """
+    def __init__(self, activation_dim, dict_size, target_l0=20, device='cpu'):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=True)
+
+        # initialize encoder and decoder weights
+        w = t.randn(activation_dim, dict_size)
+        ## normalize columns of w
+        w = w / w.norm(dim=0, keepdim=True) * 0.1
+        ## set encoder and decoder weights
+        self.decoder.weight = nn.Parameter(w.clone())
+        self.target_l0 = target_l0
+        self.device = device
+
+    def encode(self, x):
+        return grad_pursuit(x, self.decoder.weight, target_l0=self.target_l0, device=self.device)
+    
+    def decode(self, f):
+        return self.decoder(f)
+    
+    def forward(self, x, output_features=False):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        """
+        if not output_features:
+            return self.decode(self.encode(x))
+        else: # TODO rewrite so that x_hat depends on f
+            f = self.encode(x)
+            x_hat = self.decode(f)
+            # multiply f by decoder column norms
+            f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+            return x_hat, f
+            
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        assert False # TODO: need to make sure we load this correctly
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict['encoder.weight'].shape
         autoencoder = AutoEncoder(activation_dim, dict_size)
