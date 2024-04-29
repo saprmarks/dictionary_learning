@@ -5,7 +5,7 @@ https://www.lesswrong.com/posts/C5KAZQib3bzzpeyrg/full-post-progress-update-1-fr
 
 import torch as t
 
-def _grad_pursuit_update_step(signal, weights, dictionary, selected_features):
+def _grad_pursuit_update_step(signal, weights, dictionary):
     """
     signal: b x d, weights: b x n, dictionary: d x n
     """
