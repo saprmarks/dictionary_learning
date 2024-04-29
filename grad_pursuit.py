@@ -27,7 +27,6 @@ def _grad_pursuit_update_step(signal, weights, dictionary, batch_arange, selecte
     weights = t.clip(weights, min=0) # clip the weights to be positive
     return weights, selected_features
 
-@t.jit.script
 def grad_pursuit(signal, dictionary, target_l0 : int = 20, device : str = 'cpu'):
     """
     Inputs: signal: b x d, dictionary: d x n, target_l0: int, device: str
