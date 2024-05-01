@@ -8,7 +8,7 @@ from typing import Optional, Union
 import torch as t
 from tqdm import tqdm
 
-from .dictionary import AutoEncoder
+from .dictionary import AbstractAutoEncoder, AutoEncoder, GatedAutoEncoder
 
 EPS = 1e-8
 
@@ -118,6 +118,49 @@ def sae_loss(
         return mse_loss + sparsity_penalty * sparsity_loss
 
 
+def gated_sae_loss(
+    activations: t.Tensor,
+    gated_autoencoder: GatedAutoEncoder,
+    output_all_losses: bool = False,
+    l1_coef: float = 1.0,
+) -> Union[t.Tensor, tuple[t.Tensor, t.Tensor, t.Tensor]]:
+    """
+    Compute the loss of a gated autoencoder on some activations
+    """
+
+    (
+        reconstructed_activations,
+        _features,
+        active_features_pre_binarisation,
+        _active_features,
+        _feature_magnitudes,
+    ) = gated_autoencoder(activations, output_features=True)
+
+    # We’ll use the reconstruction from the baseline forward pass to train
+    # the magnitudes encoder and decoder.
+    mse_reconstruction_loss = t.linalg.norm(
+        activations - reconstructed_activations, dim=-1
+    ).mean()
+
+    # We apply a L1 penalty on the gated encoder activations (pre-binarising,
+    # post-ReLU) to incentivise them to be sparse
+    relued_gates = t.relu(active_features_pre_binarisation)  # [batch_size, num_features]
+    gating_sparsity_loss = l1_coef * relued_gates.norm(p=1, dim=-1).mean()
+
+    # Apply a reconstruction loss on the gating encoder to encourage it to
+    # reconstruct well. We apply a stop gradient for the decoding.
+    with t.no_grad():
+        gating_only_reconstruction = gated_autoencoder.decode(relued_gates)
+    gating_reconstruction_loss = t.linalg.norm(
+        activations - gating_only_reconstruction, dim=-1
+    ).mean()
+
+    if output_all_losses:
+        return mse_reconstruction_loss, gating_sparsity_loss, gating_reconstruction_loss
+    else:
+        return mse_reconstruction_loss + gating_sparsity_loss + gating_reconstruction_loss
+
+
 def resample_neurons(deads, activations, ae, optimizer):
     """
     resample dead neurons according to the following scheme:
@@ -184,7 +227,7 @@ def trainSAE(
     save_dir=None,  # directory for saving checkpoints
     log_steps=1000,  # how often to print statistics
     device="cpu",
-):
+) -> AbstractAutoEncoder:
     """
     Train and return a sparse autoencoder
     """
