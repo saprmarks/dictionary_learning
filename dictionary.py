@@ -88,16 +88,19 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost
 
     @classmethod
-    def from_pretrained(cls, path, device=None):
+    def from_pretrained(cls, path: str, device: Optional[t.device] = None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
+
         autoencoder = AutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
+
         if device is not None:
             autoencoder.to(device)
+
         return autoencoder
 
 
@@ -166,6 +169,22 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             )
         else:
             return x_hat
+
+    @classmethod
+    def from_pretrained(cls, path: str, device: Optional[t.device] = None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict["active_features_encoder.weight"].shape
+
+        autoencoder = GatedAutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+
+        if device is not None:
+            autoencoder.to(device)
+
+        return autoencoder
 
 
 class IdentityDict(Dictionary, nn.Module):
