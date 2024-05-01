@@ -4,16 +4,15 @@ Utilities for evaluating dictionaries on a model and dataset.
 
 import matplotlib.pyplot as plt
 import torch as t
-
 from nnsight import LanguageModel
 
-from .training import sae_loss
 from .config import DEBUG
+from .training import sae_loss
 
 if DEBUG:
-    tracer_kwargs = {'scan' : True, 'validate' : True}
+    tracer_kwargs = {"scan": True, "validate": True}
 else:
-    tracer_kwargs = {'scan' : False, 'validate' : False}
+    tracer_kwargs = {"scan": False, "validate": False}
 
 
 def loss_recovered(
@@ -31,8 +30,8 @@ def loss_recovered(
     """
     # figure out which submodules output tuples
     is_tuple = {}
-    with model.trace('_'):
-        if io == 'out':
+    with model.trace("_"):
+        if io == "out":
             for submodule in submodules:
                 is_tuple[submodule] = type(submodule.output.shape) == tuple
         else:
@@ -51,28 +50,28 @@ def loss_recovered(
         logits_original = output.value.logits
     except:
         logits_original = output.value
-    
+
     # logits when replacing component output with reconstruction by autoencoder
     with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
                 if is_tuple[submodule]:
-                    submodule.input[0][:] = dictionary(submodule.input[0]) # TODO: Fix
+                    submodule.input[0][:] = dictionary(submodule.input[0])  # TODO: Fix
                 else:
                     submodule.input = dictionary(submodule.input)
             elif io == "out":
                 if is_tuple[submodule]:
-                    submodule.output[0][:] = dictionary(submodule.output[0]) # TODO: Fix
+                    submodule.output[0][:] = dictionary(submodule.output[0])  # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.output)
             elif io == "in_to_out":
                 if is_tuple[submodule]:
-                    submodule.output[0][:] = dictionary(submodule.input[0]) # TODO: Fix
+                    submodule.output[0][:] = dictionary(submodule.input[0])  # TODO: Fix
                 else:
                     submodule.output = dictionary(submodule.input)
             else:
                 raise ValueError(f"invalid io: {io}")
-            
+
         output = model.output.save()
 
     try:
@@ -85,17 +84,17 @@ def loss_recovered(
         for submodule in submodules:
             if io == "in":
                 if is_tuple[submodule]:
-                    submodule.input[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
+                    submodule.input[0][:] = t.zeros_like(submodule.input[0])  # TODO: Fix
                 else:
                     submodule.input = t.zeros_like(submodule.input)
             elif io == "out":
                 if is_tuple[submodule]:
-                    submodule.output[0][:] = t.zeros_like(submodule.output[0]) # TODO: Fix
+                    submodule.output[0][:] = t.zeros_like(submodule.output[0])  # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.output)
             elif io == "in_to_out":
                 if is_tuple[submodule]:
-                    submodule.output[0][:] = t.zeros_like(submodule.input[0]) # TODO: Fix
+                    submodule.output[0][:] = t.zeros_like(submodule.input[0])  # TODO: Fix
                 else:
                     submodule.output = t.zeros_like(submodule.input)
             else:
@@ -109,10 +108,10 @@ def loss_recovered(
         logits_zero = output.value
 
     try:
-        tokens = input[1]['input_ids']
+        tokens = input[1]["input_ids"]
     except:
-        tokens = input[1].value['input']
-    
+        tokens = input[1].value["input"]
+
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
         loss = t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)(
@@ -151,8 +150,12 @@ def evaluate(
             )
 
         # compute reconstruction (L2) loss and sparsity loss
-        mse_loss, sparsity_loss = sae_loss(
-            acts, dictionary, sparsity_penalty=None, use_entropy=entropy, separate=True
+        mse_loss, sparsity_loss, _ = sae_loss(
+            acts,
+            dictionary,
+            sparsity_penalty=0,
+            use_entropy=entropy,
+            output_all_losses=True,
         )
         out["mse_loss"] = mse_loss.item() ** 2  # / acts.norm(dim=-1).mean().item() ** 2
         out["sparsity_loss"] = sparsity_loss.item()
