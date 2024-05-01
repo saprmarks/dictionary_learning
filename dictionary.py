@@ -102,6 +102,10 @@ class AutoEncoder(Dictionary, nn.Module):
 
 
 class GatedAutoEncoder(Dictionary, nn.Module):
+    """An autoencoder with a gating mechanism as given in Improving Dictionary Learning with
+    Gated Sparse Autoencoders (Rajamanoharan et al 2024)
+    """
+
     def __init__(self, activation_dim: int, dict_size: int):
         super().__init__()
         self.activation_dim = activation_dim
@@ -140,9 +144,13 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         features = self.decoder(features) + self.bias
         return features
 
-    def forward(
-        self, x: t.Tensor, output_features: bool = False, ghost_mask: Optional[t.Tensor] = None
-    ):
+    def forward(self, x: t.Tensor, output_features: bool = False):
+        """
+        Forward pass of the Gated Sparse Autoencoder.
+        x : activations to be autoencoded
+        output_features : if True, return the encoded features, active_features
+            and feature_magnitude tensors as well as the decoded x
+        """
         features, active_features, feature_magnitudes = self.encode(x)
         x_hat = self.decode(features)
         if output_features:
