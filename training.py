@@ -219,7 +219,7 @@ def trainSAE(
     lr,
     sparsity_penalty,
     entropy=False,
-    steps=None,  # if None, train until activations are exhausted
+    total_train_steps=None,  # if None, train until activations are exhausted
     warmup_steps=1000,  # linearly increase the learning rate for this many steps
     resample_steps=None,  # how often to resample dead neurons
     ghost_threshold=None,  # how many steps a neuron has to be dead for it to turn into a ghost
@@ -227,17 +227,24 @@ def trainSAE(
     save_dir=None,  # directory for saving checkpoints
     log_steps=1000,  # how often to print statistics
     device="cpu",
+    use_gated_sae: bool = False,
 ) -> AbstractAutoEncoder:
     """
     Train and return a sparse autoencoder
     """
-    ae = AutoEncoder(activation_dim, dictionary_size).to(device)
+    if use_gated_sae:
+        autoencoder = GatedAutoEncoder(activation_dim, dictionary_size).to(device)
+    else:
+        autoencoder = AutoEncoder(activation_dim, dictionary_size).to(device)
+
     num_samples_since_activated = t.zeros(
         dictionary_size, dtype=t.int32, device=device
     )  # how many samples since each neuron was last activated?
 
     # set up optimizer and scheduler
-    optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
+    optimizer = ConstrainedAdam(
+        autoencoder.parameters(), autoencoder.decoder.parameters(), lr=lr
+    )
     if resample_steps is None:
 
         def warmup_fn(step):
@@ -250,8 +257,8 @@ def trainSAE(
 
     scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
 
-    for step, acts in enumerate(tqdm(activations, total=steps)):
-        if steps is not None and step >= steps:
+    for step, acts in enumerate(tqdm(activations, total=total_train_steps)):
+        if total_train_steps is not None and step >= total_train_steps:
             break
 
         if isinstance(acts, t.Tensor):  # typical case
@@ -263,14 +270,20 @@ def trainSAE(
 
         optimizer.zero_grad()
         # computing the sae_loss also updates num_samples_since_activated in place
-        loss = sae_loss(
-            acts,
-            ae,
-            sparsity_penalty,
-            use_entropy=entropy,
-            num_samples_since_activated=num_samples_since_activated,
-            ghost_threshold=ghost_threshold,
-        )
+        if use_gated_sae:
+            assert isinstance(autoencoder, GatedAutoEncoder)
+            assert isinstance(acts, t.Tensor)
+            loss = gated_sae_loss(acts, autoencoder)
+        else:
+            assert isinstance(autoencoder, AutoEncoder)
+            loss = sae_loss(
+                acts,
+                autoencoder,
+                sparsity_penalty,
+                use_entropy=entropy,
+                num_samples_since_activated=num_samples_since_activated,
+                ghost_threshold=ghost_threshold,
+            )
         assert isinstance(loss, t.Tensor)
 
         loss.backward()
@@ -278,32 +291,53 @@ def trainSAE(
         scheduler.step()
 
         # deal with resampling neurons
-        if resample_steps is not None and step % resample_steps == 0:
+        if (
+            resample_steps is not None
+            and step % resample_steps == 0
+            and use_gated_sae is False
+        ):
             # resample neurons who've been dead for the last resample_steps / 2 steps
             resample_neurons(
-                num_samples_since_activated > resample_steps / 2, acts, ae, optimizer
+                num_samples_since_activated > resample_steps / 2, acts, autoencoder, optimizer
             )
 
         # logging
         if log_steps is not None and step % log_steps == 0:
             with t.no_grad():
-                losses = sae_loss(
-                    acts,
-                    ae,
-                    sparsity_penalty,
-                    entropy,
-                    output_all_losses=True,
-                    num_samples_since_activated=num_samples_since_activated,
-                    ghost_threshold=ghost_threshold,
-                )
-                if ghost_threshold is None:
-                    mse_loss, sparsity_loss, _ = losses
-                    print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
-                else:
-                    mse_loss, sparsity_loss, ghost_loss = losses
+                if use_gated_sae:
+                    assert isinstance(autoencoder, GatedAutoEncoder)
+                    assert isinstance(acts, t.Tensor)
+                    losses = gated_sae_loss(acts, autoencoder, output_all_losses=True)
+                    (
+                        mse_reconstruction_loss,
+                        gating_sparsity_loss,
+                        gating_reconstruction_loss,
+                    ) = losses
                     print(
-                        f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}, ghost_loss: {ghost_loss}"
+                        f"""step {step}
+MSE reconstruction loss: {mse_reconstruction_loss}, gating sparsity loss: {gating_sparsity_loss}, gating reconstruction loss: {gating_reconstruction_loss}"""
                     )
+                else:
+                    assert isinstance(autoencoder, AutoEncoder)
+                    losses = sae_loss(
+                        acts,
+                        autoencoder,
+                        sparsity_penalty,
+                        entropy,
+                        output_all_losses=True,
+                        num_samples_since_activated=num_samples_since_activated,
+                        ghost_threshold=ghost_threshold,
+                    )
+                    if ghost_threshold is None:
+                        mse_loss, sparsity_loss, _ = losses
+                        print(
+                            f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}"
+                        )
+                    else:
+                        mse_loss, sparsity_loss, ghost_loss = losses
+                        print(
+                            f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}, ghost_loss: {ghost_loss}"
+                        )
                 # dict_acts = ae.encode(acts)
                 # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
                 # if isinstance(activations, ActivationBuffer):
@@ -315,6 +349,9 @@ def trainSAE(
         if save_steps is not None and save_dir is not None and step % save_steps == 0:
             if not os.path.exists(os.path.join(save_dir, "checkpoints")):
                 os.mkdir(os.path.join(save_dir, "checkpoints"))
-            t.save(ae.state_dict(), os.path.join(save_dir, "checkpoints", f"ae_{step}.pt"))
+            t.save(
+                autoencoder.state_dict(),
+                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt"),
+            )
 
-    return ae
+    return autoencoder
