@@ -101,6 +101,56 @@ class AutoEncoder(Dictionary, nn.Module):
         return autoencoder
 
 
+class GatedAutoEncoder(Dictionary, nn.Module):
+    def __init__(self, activation_dim: int, dict_size: int):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+
+        # Using tied bias term for encoder and decoder
+        self.bias = nn.Parameter(t.zeros(activation_dim))
+
+        self.active_features_encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        self.feature_magnitudes_encoder = nn.Linear(activation_dim, dict_size, bias=True)
+
+        # rows of decoder weight matrix are unit vectors
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
+        self.act_fn = nn.ReLU()
+
+    def encode(self, x: t.Tensor) -> tuple[t.Tensor, t.IntTensor, t.Tensor]:
+        # Apply pre-encoder bias
+        x_centered = x - self.bias
+
+        # Gating encoder (estimates which features are active)
+        active_features: t.IntTensor = self.active_features_encoder(x_centered) > 0
+
+        # Magnitudes encoder (estimates active features’ magnitudes)
+        feature_magnitudes = self.act_fn(self.feature_magnitudes_encoder(x_centered))
+
+        # Element-wise multiplication of active features and their magnitudes
+        features = active_features * feature_magnitudes
+
+        return features, active_features, feature_magnitudes
+
+    def decode(self, features: t.Tensor) -> t.Tensor:
+        features = self.decoder(features) + self.bias
+        return features
+
+    def forward(
+        self, x: t.Tensor, output_features: bool = False, ghost_mask: Optional[t.Tensor] = None
+    ):
+        features, active_features, feature_magnitudes = self.encode(x)
+        x_hat = self.decode(features)
+        if output_features:
+            return x_hat, features, active_features, feature_magnitudes
+        else:
+            return x_hat
+
+
 class IdentityDict(Dictionary, nn.Module):
     """
     An identity dictionary, i.e. the identity function.
