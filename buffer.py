@@ -105,8 +105,8 @@ class ActivationBuffer:
             with t.no_grad():
                 with self.model.trace(
                     self.text_batch(),
-                    **tracer_kwargs,
-                    invoker_args={"truncation": True, "max_length": self.ctx_len}
+                    kwargs=tracer_kwargs,
+                    invoker_args={"truncation": True, "max_length": self.ctx_len},
                 ):
                     if self.io == "in":
                         hidden_states = self.submodule.input[0].save()

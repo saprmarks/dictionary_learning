@@ -44,7 +44,7 @@ def loss_recovered(
         invoker_args = {"truncation": True, "max_length": max_len}
 
     # unmodified logits
-    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, invoker_args=invoker_args, kwargs=tracer_kwargs):
         output = model.output.save()
     try:
         logits_original = output.value.logits
@@ -52,7 +52,7 @@ def loss_recovered(
         logits_original = output.value
 
     # logits when replacing component output with reconstruction by autoencoder
-    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, kwargs=tracer_kwargs, invoker_args=invoker_args):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
                 if is_tuple[submodule]:
@@ -80,7 +80,7 @@ def loss_recovered(
         logits_reconstructed = output.value
 
     # logits when zero ablating components
-    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, kwargs=tracer_kwargs, invoker_args=invoker_args):
         for submodule in submodules:
             if io == "in":
                 if is_tuple[submodule]:
@@ -114,7 +114,12 @@ def loss_recovered(
 
     losses = []
     for logits in [logits_original, logits_reconstructed, logits_zero]:
-        loss = t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)(
+        criterion = (
+            t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)
+            if model.tokenizer.pad_token_id is not None
+            else t.nn.CrossEntropyLoss()
+        )
+        loss = criterion(
             logits[:, :-1, :].reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1)
         ).item()
         losses.append(loss)
@@ -134,7 +139,7 @@ def evaluate(
     batch_size=None,  # batch size for loss recovered
     entropy=False,  # whether to use entropy regularization
     hist_save_path=None,  # path for saving histograms
-    hist_title=None,  # title for histograms
+    hist_title="",  # title for histograms
     io="out",  # can be 'in', 'out', or 'in_to_out'
     device="cpu",
 ):
@@ -176,7 +181,7 @@ def evaluate(
         if hist_save_path is not None:
             freqs = actives.float().mean(dim=0)
             plt.figure()
-            plt.hist(freqs.cpu(), bins=t.logspace(-5, 0, 100))
+            plt.hist(freqs.cpu(), bins=t.logspace(-5, 0, 100).tolist())
             plt.xscale("log")
             plt.title(hist_title)
             plt.savefig(hist_save_path)
