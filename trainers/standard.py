@@ -40,6 +40,7 @@ class StandardTrainer(SAETrainer):
                  resample_steps=None, # how often to resample neurons
                  seed=None,
                  device=None,
+                 wandb_name='StandardTrainer',
     ):
         super().__init__(seed)
 
@@ -53,6 +54,7 @@ class StandardTrainer(SAETrainer):
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
+        self.wandb_name = wandb_name
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
@@ -147,5 +149,6 @@ class StandardTrainer(SAETrainer):
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
-            'device' : self.device
+            'device' : self.device,
+            'wandb_name': self.wandb_name,
         }

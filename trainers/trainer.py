@@ -18,3 +18,9 @@ class SAETrainer:
             if hasattr(self, param):
                 stats[param] = getattr(self, param)
         return stats
+    
+    @property
+    def config(self):
+        return {
+            'wandb_name': 'trainer',
+        }

@@ -47,11 +47,13 @@ class ListaTrainer(SAETrainer):
                  warmup_steps=1000, # lr warmup period at start of training and after each resample
                  resample_steps=None, # how often to resample neurons
                  device=None,
+                 wandb_name='ListaTrainer',
     ):
         super().__init__(ae)
         self.lr = lr
         self.sparsity_coefficient=sparsity_coefficient
         self.warmup_steps = warmup_steps
+        self.wandb_name = wandb_name
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
@@ -194,5 +196,6 @@ class ListaTrainer(SAETrainer):
             'sparsity_coefficient' : self.sparsity_coefficient,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
-            'device' : self.device
+            'device' : self.device,
+            'wandb_name': self.wandb_name,
         }

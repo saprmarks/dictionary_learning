@@ -10,11 +10,22 @@ from ..config import DEBUG
 
 class GroupSAETrainer(StandardTrainer):
     
-    def __init__(self, ae, group_size, lr=0.001, l1_penalty=0.1, warmup_steps=1000, resample_steps=None, device=None):
+    def __init__(
+            self, 
+            ae, 
+            group_size, 
+            lr=0.001, 
+            l1_penalty=0.1, 
+            warmup_steps=1000, 
+            resample_steps=None, 
+            device=None,
+            wandb_name='GroupSAETrainer',
+        ):
         super().__init__(ae, lr, l1_penalty, warmup_steps, resample_steps, device)
         
         self.group_size = group_size
         self.n_groups = self.ae.dict_size // self.group_size
+        self.wandb_name = wandb_name
         
     def loss(self, x):
         

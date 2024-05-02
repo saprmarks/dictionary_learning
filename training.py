@@ -23,6 +23,8 @@ def trainSAE(
                 'l1_penalty' : 1e-1,
                 'warmup_steps' : 1000,
                 'resample_steps' : None,
+                'seed' : None,
+                'wandb_name' : 'StandardTrainer',
             }
         ],
         steps=None,
@@ -37,7 +39,7 @@ def trainSAE(
         wandb.init(
             entity="sae-training",
             project="sae-training",
-            config={f'trainer{i}' : config for i, config in enumerate(trainer_configs)}
+            config={f'{config["wandb_name"]}-{i}' : config for i, config in enumerate(trainer_configs)}
         )
         # process save_dir in light of run name
         if save_dir is not None:
@@ -87,16 +89,17 @@ def trainSAE(
                 residual_variance = t.var(activations - x_hat, dim=0).sum()
                 frac_variance_explained = (1 - residual_variance / total_variance)
 
-                log[f'trainer{i}/l2_loss'] = l2_loss.item()
-                log[f'trainer{i}/l1_loss'] = l1_loss.item()
-                log[f'trainer{i}/l0'] = l0.item()
-                log[f'trainer{i}/frac_alive'] = frac_alive.item()
-                log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
+                trainer_name = f'{trainer.config["wandb_name"]}-{i}'
+                log[f'{trainer_name}/l2_loss'] = l2_loss.item()
+                log[f'{trainer_name}/l1_loss'] = l1_loss.item()
+                log[f'{trainer_name}/l0'] = l0.item()
+                log[f'{trainer_name}/frac_alive'] = frac_alive.item()
+                log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
                 # log parameters from training 
                 trainer_log = trainer.get_logging_parameters()
                 for name, value in trainer_log.items():
-                    log[f'trainer{i}/{name}'] = value
+                    log[f'{trainer_name}/{name}'] = value
 
                 # TODO get this to work
                 # metrics = evaluate(

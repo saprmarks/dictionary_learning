@@ -48,6 +48,7 @@ class PAnnealTrainer(SAETrainer):
                  steps=None, # total number of steps to train for
                  device=None,
                  seed=None,
+                 wandb_name='PAnnealTrainer',
     ):
         super().__init__(seed)
 
@@ -71,6 +72,7 @@ class PAnnealTrainer(SAETrainer):
         self.steps = steps
         self.logging_parameters = ['p', 'lp_loss']
         self.seed = seed
+        self.wandb_name = wandb_name
 
         if device is None:
             self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
@@ -95,25 +97,6 @@ class PAnnealTrainer(SAETrainer):
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
-
-    @property
-    def config(self):
-        return {
-            'trainer_class' : "PAnnealTrainer",
-            'dict_class' : AutoEncoder,
-            'activation_dim' : self.activation_dim,
-            'dict_size' : self.dict_size,
-            'lr' : self.lr,
-            'sparsity_function' : self.sparsity_function,
-            'sparsity_penalty' : self.sparsity_penalty,
-            'p_start' : self.p_start,
-            'p_end' : self.p_end,
-            'anneal_start' : self.anneal_start,
-            'warmup_steps' : self.warmup_steps,
-            'resample_steps' : self.resample_steps,
-            'steps' : self.steps,
-            'seed' : self.seed,
-        }
 
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -166,7 +149,6 @@ class PAnnealTrainer(SAETrainer):
         
         return l2_loss + self.sparsity_penalty * self.lp_loss
 
-
     def update(self, step, activations):
         activations = activations.to(self.device)
 
@@ -178,3 +160,23 @@ class PAnnealTrainer(SAETrainer):
 
         if self.resample_steps is not None and step % self.resample_steps == self.resample_steps - 1:
             self.resample_neurons(self.steps_since_active > self.resample_steps / 2, activations)
+
+    @property
+    def config(self):
+        return {
+            'trainer_class' : "PAnnealTrainer",
+            'dict_class' : "AutoEncoder",
+            'activation_dim' : self.activation_dim,
+            'dict_size' : self.dict_size,
+            'lr' : self.lr,
+            'sparsity_function' : self.sparsity_function,
+            'sparsity_penalty' : self.sparsity_penalty,
+            'p_start' : self.p_start,
+            'p_end' : self.p_end,
+            'anneal_start' : self.anneal_start,
+            'warmup_steps' : self.warmup_steps,
+            'resample_steps' : self.resample_steps,
+            'steps' : self.steps,
+            'seed' : self.seed,
+            'wandb_name' : self.wandb_name,
+        }
