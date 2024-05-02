@@ -39,7 +39,7 @@ class PAnnealTrainer(SAETrainer):
                  dict_size=64*512, 
                  lr=1e-3, 
                  sparsity_function='Lp', # Lp or Lp^p
-                 sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
+                 initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
                  p_start=1, # starting value of p (constant throughout warmup)
                  p_end=0.5, # annealing p_start to p_end linearly after warmup_steps
@@ -49,6 +49,8 @@ class PAnnealTrainer(SAETrainer):
                  device=None,
                  seed=None,
                  wandb_name='PAnnealTrainer',
+                 adaptive_sparsity_penalty=False, # whether to adapt the sparsity penalty
+                 sparsity_loss_queue_length=10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
     ):
         super().__init__(seed)
 
@@ -61,18 +63,24 @@ class PAnnealTrainer(SAETrainer):
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.lr = lr
+
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
         self.p = None # p is set in self.loss()
         self.lp_loss = None # lp_loss is set in self.loss()
-        self.sparsity_penalty=sparsity_penalty
+        self.current_sparsity_penalty = initial_sparsity_penalty
+        self.adaptive_sparsity_penalty = adaptive_sparsity_penalty
+        self.sparsity_loss_queue = []
+        self.sparsity_loss_queue_length = sparsity_loss_queue_length
+
         self.warmup_steps = warmup_steps
         self.steps = steps
-        self.logging_parameters = ['p', 'lp_loss']
+        self.logging_parameters = ['p', 'lp_loss', 'current_sparsity_penalty']
         self.seed = seed
         self.wandb_name = wandb_name
+        
 
         if device is None:
             self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
@@ -136,18 +144,31 @@ class PAnnealTrainer(SAETrainer):
    
         relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
         self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
+
         if self.sparsity_function == 'Lp':
             self.lp_loss = f.norm(p=self.p, dim=-1).mean()
         elif self.sparsity_function == 'Lp^p':
             self.lp_loss = f.pow(self.p).sum(dim=-1).mean()
+
+        # append lp loss to queue, keeping `sparsity_loss_queue_length` most recent losses
+        self.sparsity_loss_queue.append(self.lp_loss.item())
+        if len(self.sparsity_loss_queue) > self.sparsity_loss_queue_length:
+            self.sparsity_loss_queue.pop(0)
+
+        # Determine the current sparsity penalty, s.t. the sparsity loss is equal to the mean of the last `sparsity_loss_queue_length` losses
+        if (self.steps > self.anneal_start) & self.adaptive_sparsity_penalty:
+            local_mean_sparsity_loss = sum(self.sparsity_loss_queue) / len(self.sparsity_loss_queue)
+            self.current_sparsity_penalty = local_mean_sparsity_loss / self.lp_loss
 
         if self.steps_since_active is not None:
             # update steps_since_active
             deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
+
+        return l2_loss + self.current_sparsity_penalty * self.lp_loss
+    
         
-        return l2_loss + self.sparsity_penalty * self.lp_loss
 
     def update(self, step, activations):
         activations = activations.to(self.device)
@@ -170,10 +191,12 @@ class PAnnealTrainer(SAETrainer):
             'dict_size' : self.dict_size,
             'lr' : self.lr,
             'sparsity_function' : self.sparsity_function,
-            'sparsity_penalty' : self.sparsity_penalty,
+            'sparsity_penalty' : self.current_sparsity_penalty,
             'p_start' : self.p_start,
             'p_end' : self.p_end,
             'anneal_start' : self.anneal_start,
+            'adaptive_sparsity_penalty' : self.adaptive_sparsity_penalty,
+            'sparsity_loss_queue_length' : self.sparsity_loss_queue_length,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'steps' : self.steps,
