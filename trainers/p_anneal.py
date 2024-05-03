@@ -45,7 +45,7 @@ class PAnnealTrainer(SAETrainer):
                  p_start=1, # starting value of p (constant throughout warmup)
                  p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
                  n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
-                 activation_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
+                 sparsity_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
                  resample_steps=None, # number of steps after which to resample dead neurons
                  steps=None, # total number of steps to train for
                  device=None,
@@ -74,14 +74,16 @@ class PAnnealTrainer(SAETrainer):
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
-        self.p = None # p is set in self.loss()
+        self.p = p_start # p is set in self.loss()
+        self.next_p = p_start
         self.lp_loss = None # lp_loss is set in self.loss()
         self.n_sparsity_updates = n_sparsity_updates
-        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates+1, dtype=int)[:1]
+        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates+1, dtype=int)
+        self.p_values = t.linspace(p_start, p_end, n_sparsity_updates+1)
         self.initial_sparsity_penalty = initial_sparsity_penalty
         self.current_sparsity_penalty = initial_sparsity_penalty # alpha
-        self.activation_queue_length = activation_queue_length
-        self.activation_queue = t.zeros(0, dict_size).to(self.device)
+        self.sparsity_queue_length = sparsity_queue_length
+        self.sparsity_queue = t.zeros(0, 2).to(self.device)
 
         self.warmup_steps = warmup_steps
         self.steps = steps
@@ -137,30 +139,37 @@ class PAnnealTrainer(SAETrainer):
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
 
-    def lp_norm(self, x, p):
+    def lp_norm(self, f, p):
         if self.sparsity_function == 'Lp':
-            return t.norm(x, p=p, dim=-1).mean()
+            return t.norm(f, p=p, dim=-1).mean()
         elif self.sparsity_function == 'Lp^p':
-            return t.norm(x, p=p, dim=-1).mean()
+            return t.norm(f, p=p, dim=-1).pow(p).mean()
     
     def loss(self, x, step):
         # Compute loss terms
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         self.lp_loss = self.lp_norm(f, self.p)
+        lp_loss_next = self.lp_norm(f, self.next_p)
+        lp_losses = t.hstack([self.lp_loss, lp_loss_next]).unsqueeze(dim=0)
 
         # Keep a buffer of recent feature activations for determining sparsity penalty alpha
-        self.activation_queue = t.cat([self.activation_queue, f], dim=0)
-        if len(self.activation_queue) > self.activation_queue_length:
-            self.activation_queue = self.activation_queue[1:]
+        self.sparsity_queue = t.vstack([self.sparsity_queue, lp_losses])
+        if self.sparsity_queue.shape[0] > self.sparsity_queue_length:
+            self.sparsity_queue = self.sparsity_queue[1:]
+            print(f'sparsity_queue.shape: {self.sparsity_queue.shape}')
    
         # Adapt sparsity penalty alpha
         if step in self.sparsity_update_steps:
-            relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
-            p_new = self.p_start + relative_progress * (self.p_end - self.p_start)
-            local_sparsity_new = self.lp_norm(self.activation_queue, p_new)
-            local_sparsity_old = self.lp_norm(self.activation_queue, self.p)
+            # relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
+            # p_new = self.p_start + relative_progress * (self.p_end - self.p_start)
+            local_sparsity_new = self.sparsity_queue[0, :].mean()
+            local_sparsity_old = self.sparsity_queue[1, :].mean()
             self.current_sparsity_penalty = self.initial_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
+            self.p = self.p_values[0].item()
+            if self.sparsity_queue.shape[0] > 1:
+                self.next_p = self.p_values[1].item()
+            self.sparsity_queue = self.sparsity_queue[1:]
 
         # Update dead feature count
         if self.steps_since_active is not None:
@@ -197,7 +206,7 @@ class PAnnealTrainer(SAETrainer):
             'p_start' : self.p_start,
             'p_end' : self.p_end,
             'anneal_start' : self.anneal_start,
-            'activation_queue_length' : self.activation_queue_length,
+            'sparsity_queue_length' : self.sparsity_queue_length,
             'n_sparsity_updates' : self.n_sparsity_updates,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
