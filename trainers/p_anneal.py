@@ -38,19 +38,19 @@ class PAnnealTrainer(SAETrainer):
                  activation_dim=512,
                  dict_size=64*512, 
                  lr=1e-3, 
+                 warmup_steps=1000, # lr warmup period at start of training and after each resample
                  sparsity_function='Lp', # Lp or Lp^p
                  initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
                  p_start=1, # starting value of p (constant throughout warmup)
-                 p_end=0.5, # annealing p_start to p_end linearly after warmup_steps
-                 warmup_steps=1000, # lr warmup period at start of training and after each resample
+                 p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
+                 n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
+                 activation_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
                  resample_steps=None, # number of steps after which to resample dead neurons
                  steps=None, # total number of steps to train for
                  device=None,
-                 seed=None,
+                 seed=42,
                  wandb_name='PAnnealTrainer',
-                 adaptive_sparsity_penalty=False, # whether to adapt the sparsity penalty
-                 sparsity_loss_queue_length=10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
     ):
         super().__init__(seed)
 
@@ -58,39 +58,38 @@ class PAnnealTrainer(SAETrainer):
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
 
+        if device is None:
+            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+        else:
+            self.device = device
+
         # initialize dictionary
-        self.ae = dict_class(activation_dim, dict_size)
         self.activation_dim = activation_dim
         self.dict_size = dict_size
+        self.ae = dict_class(activation_dim, dict_size)
+        self.ae.to(self.device)
+        
         self.lr = lr
-
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
         self.p = None # p is set in self.loss()
         self.lp_loss = None # lp_loss is set in self.loss()
-        self.current_sparsity_penalty = initial_sparsity_penalty
-        self.adaptive_sparsity_penalty = adaptive_sparsity_penalty
-        self.sparsity_loss_queue = []
-        self.sparsity_loss_queue_length = sparsity_loss_queue_length
+        self.n_sparsity_updates = n_sparsity_updates
+        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates+1, dtype=int)[:1]
+        self.initial_sparsity_penalty = initial_sparsity_penalty
+        self.current_sparsity_penalty = initial_sparsity_penalty # alpha
+        self.activation_queue_length = activation_queue_length
+        self.activation_queue = t.zeros(0, dict_size).to(self.device)
 
         self.warmup_steps = warmup_steps
         self.steps = steps
         self.logging_parameters = ['p', 'lp_loss', 'current_sparsity_penalty']
         self.seed = seed
         self.wandb_name = wandb_name
-        
-
-        if device is None:
-            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
-        else:
-            self.device = device
-        self.ae.to(self.device)
 
         self.resample_steps = resample_steps
-
-
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
             self.steps_since_active = t.zeros(self.dict_size, dtype=int).to(self.device)
@@ -137,39 +136,42 @@ class PAnnealTrainer(SAETrainer):
             ## decoder weight
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
+
+    def lp_norm(self, x, p):
+        if self.sparsity_function == 'Lp':
+            return t.norm(x, p=p, dim=-1).mean()
+        elif self.sparsity_function == 'Lp^p':
+            return t.norm(x, p=p, dim=-1).mean()
     
     def loss(self, x, step):
+        # Compute loss terms
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
+        self.lp_loss = self.lp_norm(f, self.p)
+
+        # Keep a buffer of recent feature activations for determining sparsity penalty alpha
+        self.activation_queue = t.cat([self.activation_queue, f], dim=0)
+        if len(self.activation_queue) > self.activation_queue_length:
+            self.activation_queue = self.activation_queue[1:]
    
-        relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
-        self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
+        # Adapt sparsity penalty alpha
+        if step in self.sparsity_update_steps:
+            relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
+            p_new = self.p_start + relative_progress * (self.p_end - self.p_start)
+            local_sparsity_new = self.lp_norm(self.activation_queue, p_new)
+            local_sparsity_old = self.lp_norm(self.activation_queue, self.p)
+            self.current_sparsity_penalty = self.initial_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
 
-        if self.sparsity_function == 'Lp':
-            self.lp_loss = f.norm(p=self.p, dim=-1).mean()
-        elif self.sparsity_function == 'Lp^p':
-            self.lp_loss = f.pow(self.p).sum(dim=-1).mean()
-
-        # append lp loss to queue, keeping `sparsity_loss_queue_length` most recent losses
-        self.sparsity_loss_queue.append(self.lp_loss.item())
-        if len(self.sparsity_loss_queue) > self.sparsity_loss_queue_length:
-            self.sparsity_loss_queue.pop(0)
-
-        # Determine the current sparsity penalty, s.t. the sparsity loss is equal to the mean of the last `sparsity_loss_queue_length` losses
-        if (self.steps > self.anneal_start) & self.adaptive_sparsity_penalty:
-            local_mean_sparsity_loss = sum(self.sparsity_loss_queue) / len(self.sparsity_loss_queue)
-            self.current_sparsity_penalty = local_mean_sparsity_loss / self.lp_loss
-
+        # Update dead feature count
         if self.steps_since_active is not None:
             # update steps_since_active
             deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
-
+        
         return l2_loss + self.current_sparsity_penalty * self.lp_loss
     
         
-
     def update(self, step, activations):
         activations = activations.to(self.device)
 
@@ -195,8 +197,8 @@ class PAnnealTrainer(SAETrainer):
             'p_start' : self.p_start,
             'p_end' : self.p_end,
             'anneal_start' : self.anneal_start,
-            'adaptive_sparsity_penalty' : self.adaptive_sparsity_penalty,
-            'sparsity_loss_queue_length' : self.sparsity_loss_queue_length,
+            'activation_queue_length' : self.activation_queue_length,
+            'n_sparsity_updates' : self.n_sparsity_updates,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'steps' : self.steps,
