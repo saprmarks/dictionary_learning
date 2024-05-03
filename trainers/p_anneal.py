@@ -83,7 +83,7 @@ class PAnnealTrainer(SAETrainer):
         self.initial_sparsity_penalty = initial_sparsity_penalty
         self.current_sparsity_penalty = initial_sparsity_penalty # alpha
         self.sparsity_queue_length = sparsity_queue_length
-        self.sparsity_queue = t.zeros(0, 2).to(self.device)
+        self.sparsity_queue = []
 
         self.warmup_steps = warmup_steps
         self.steps = steps
@@ -151,25 +151,20 @@ class PAnnealTrainer(SAETrainer):
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         self.lp_loss = self.lp_norm(f, self.p)
         lp_loss_next = self.lp_norm(f, self.next_p)
-        lp_losses = t.hstack([self.lp_loss, lp_loss_next]).unsqueeze(dim=0)
 
         # Keep a buffer of recent feature activations for determining sparsity penalty alpha
-        self.sparsity_queue = t.vstack([self.sparsity_queue, lp_losses])
-        if self.sparsity_queue.shape[0] > self.sparsity_queue_length:
-            self.sparsity_queue = self.sparsity_queue[1:]
-            print(f'sparsity_queue.shape: {self.sparsity_queue.shape}')
+        self.sparsity_queue.append([self.lp_loss.item(), lp_loss_next.item()])
+        self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
    
         # Adapt sparsity penalty alpha
         if step in self.sparsity_update_steps:
-            # relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
-            # p_new = self.p_start + relative_progress * (self.p_end - self.p_start)
-            local_sparsity_new = self.sparsity_queue[0, :].mean()
-            local_sparsity_old = self.sparsity_queue[1, :].mean()
+            local_sparsity_new = t.tensor(self.sparsity_queue[:][0]).mean()
+            local_sparsity_old = t.tensor(self.sparsity_queue[:][1]).mean()
             self.current_sparsity_penalty = self.initial_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
             self.p = self.p_values[0].item()
-            if self.sparsity_queue.shape[0] > 1:
+            if self.p_values[0] > 1:
                 self.next_p = self.p_values[1].item()
-            self.sparsity_queue = self.sparsity_queue[1:]
+            self.p_values[1:]
 
         # Update dead feature count
         if self.steps_since_active is not None:
