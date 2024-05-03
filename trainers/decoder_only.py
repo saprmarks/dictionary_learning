@@ -99,4 +99,5 @@ class DecoderOnlySAETrainer(SAETrainer):
             'warmup_steps' : self.warmup_steps,
             'target_l0' : self.target_l0,
             'device' : self.device,
+            'wandb_name' : self.wandb_name
         }
