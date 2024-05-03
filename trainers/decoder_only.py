@@ -42,6 +42,7 @@ class DecoderOnlySAETrainer(SAETrainer):
                  target_l0=20,
                  seed=None,
                  device=None,
+                 wandb_name="decoder_only"
     ):
         super().__init__(seed)
 
@@ -56,6 +57,7 @@ class DecoderOnlySAETrainer(SAETrainer):
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
         self.target_l0 = target_l0
+        self.wandb_name = wandb_name
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
