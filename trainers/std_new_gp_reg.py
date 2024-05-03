@@ -46,7 +46,13 @@ class StandardTrainerNewGPReg(StandardTrainerNew):
 
     def loss(self, step, x):
         x_hat, f = self.ae(x, output_features=True)
-        f_gp = grad_pursuit(x, self.decoder.weight, target_l0=self.target_l0, device=self.device)
+
+        # compute greedy approximation of best latent code
+        f_gp = grad_pursuit(
+            x,
+            self.ae.decoder.weight.detach().clone(),
+            target_l0=self.target_l0,
+            device=self.device)
 
         l1_penalty = min(1., step / self.lambda_warm_steps) * self.l1_penalty
 
