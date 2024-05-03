@@ -78,8 +78,9 @@ class PAnnealTrainer(SAETrainer):
         self.next_p = p_start
         self.lp_loss = None # lp_loss is set in self.loss()
         self.n_sparsity_updates = n_sparsity_updates
-        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates+1, dtype=int)
-        self.p_values = t.linspace(p_start, p_end, n_sparsity_updates+1)
+        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
+        self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
+        self.p_step_count = 0
         self.initial_sparsity_penalty = initial_sparsity_penalty
         self.current_sparsity_penalty = initial_sparsity_penalty # alpha
         self.sparsity_queue_length = sparsity_queue_length
@@ -158,13 +159,13 @@ class PAnnealTrainer(SAETrainer):
    
         # Adapt sparsity penalty alpha
         if step in self.sparsity_update_steps:
-            local_sparsity_new = t.tensor(self.sparsity_queue[:][0]).mean()
-            local_sparsity_old = t.tensor(self.sparsity_queue[:][1]).mean()
+            local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
+            local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
             self.current_sparsity_penalty = self.initial_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
-            self.p = self.p_values[0].item()
-            if self.p_values[0] > 1:
-                self.next_p = self.p_values[1].item()
-            self.p_values[1:]
+            self.p = self.p_values[self.p_step_count].item()
+            if self.p_step_count < self.n_sparsity_updates:
+                self.next_p = self.p_values[self.p_step_count+1].item()
+            self.p_step_count += 1
 
         # Update dead feature count
         if self.steps_since_active is not None:
