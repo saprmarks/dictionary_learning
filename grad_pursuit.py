@@ -8,7 +8,7 @@ import torch as t
 
 def _grad_pursuit_update_step(signal, weights, dictionary, batch_arange, selected_features):
     """
-    signal: b x d, weights: b x n, dictionary: d x n
+    signal: b x d, weights: b x n, dictionary: d x n, batch_arange: b, selected_features: b x n
     """
     residual = signal - t.einsum('bn,dn -> bd', weights, dictionary)
     # choose the element with largest inner product with residual, as in matched pursuit.
