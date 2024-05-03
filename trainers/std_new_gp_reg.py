@@ -50,7 +50,7 @@ class StandardTrainerNewGPReg(StandardTrainerNew):
         # compute greedy approximation of best latent code
         f_gp = grad_pursuit(
             x,
-            self.ae.decoder.weight.detach().clone(),
+            self.ae.decoder.weight,
             target_l0=self.target_l0,
             device=self.device)
 
