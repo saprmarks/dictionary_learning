@@ -219,7 +219,7 @@ def trainSAE(
     lr,
     sparsity_penalty,
     entropy=False,
-    total_train_steps=None,  # if None, train until activations are exhausted
+    steps=None,  # if None, train until activations are exhausted
     warmup_steps=1000,  # linearly increase the learning rate for this many steps
     resample_steps=None,  # how often to resample dead neurons
     ghost_threshold=None,  # how many steps a neuron has to be dead for it to turn into a ghost
@@ -257,8 +257,8 @@ def trainSAE(
 
     scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
 
-    for step, acts in enumerate(tqdm(activations, total=total_train_steps)):
-        if total_train_steps is not None and step >= total_train_steps:
+    for step, acts in enumerate(tqdm(activations, total=steps)):
+        if steps is not None and step >= steps:
             break
 
         if isinstance(acts, t.Tensor):  # typical case
