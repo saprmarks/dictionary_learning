@@ -23,6 +23,8 @@ def trainSAE(
                 'l1_penalty' : 1e-1,
                 'warmup_steps' : 1000,
                 'resample_steps' : None,
+                'seed' : None,
+                'wandb_name' : 'StandardTrainer',
             }
         ],
         steps=None,
@@ -37,7 +39,7 @@ def trainSAE(
         wandb.init(
             entity="sae-training",
             project="sae-training",
-            config={f'trainer{i}' : config for i, config in enumerate(trainer_configs)}
+            config={f'{config["wandb_name"]}-{i}' : config for i, config in enumerate(trainer_configs)}
         )
         # process save_dir in light of run name
         if save_dir is not None:
@@ -89,8 +91,10 @@ def trainSAE(
                     frac_variance_explained = (1 - residual_variance / total_variance)
                     log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
 
-                    # fraction alive
-                    log[f'trainer{i}/frac_alive'] = (f != 0).any(dim=0).float().mean().item()
+                # log parameters from training 
+                trainer_log = trainer.get_logging_parameters()
+                for name, value in trainer_log.items():
+                    log[f'{trainer_name}/{name}'] = value
 
                     # TODO get this to work
                     # metrics = evaluate(

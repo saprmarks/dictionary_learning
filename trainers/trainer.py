@@ -17,4 +17,12 @@ class SAETrainer:
         for param in self.logging_parameters:
             if hasattr(self, param):
                 stats[param] = getattr(self, param)
+            else:
+                print(f"Warning: {param} not found in {self}")
         return stats
+    
+    @property
+    def config(self):
+        return {
+            'wandb_name': 'trainer',
+        }

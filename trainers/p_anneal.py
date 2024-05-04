@@ -38,16 +38,19 @@ class PAnnealTrainer(SAETrainer):
                  activation_dim=512,
                  dict_size=64*512, 
                  lr=1e-3, 
+                 warmup_steps=1000, # lr warmup period at start of training and after each resample
                  sparsity_function='Lp', # Lp or Lp^p
-                 sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
+                 initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
                  p_start=1, # starting value of p (constant throughout warmup)
-                 p_end=0.5, # annealing p_start to p_end linearly after warmup_steps
-                 warmup_steps=1000, # lr warmup period at start of training and after each resample
+                 p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
+                 n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
+                 sparsity_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
                  resample_steps=None, # number of steps after which to resample dead neurons
                  steps=None, # total number of steps to train for
                  device=None,
-                 seed=None,
+                 seed=42,
+                 wandb_name='PAnnealTrainer',
     ):
         super().__init__(seed)
 
@@ -55,32 +58,41 @@ class PAnnealTrainer(SAETrainer):
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
 
+        if device is None:
+            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+        else:
+            self.device = device
+
         # initialize dictionary
-        self.ae = dict_class(activation_dim, dict_size)
         self.activation_dim = activation_dim
         self.dict_size = dict_size
+        self.ae = dict_class(activation_dim, dict_size)
+        self.ae.to(self.device)
+        
         self.lr = lr
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
-        self.p = None # p is set in self.loss()
-        self.lp_loss = None # lp_loss is set in self.loss()
-        self.sparsity_penalty=sparsity_penalty
+        self.p = p_start # p is set in self.loss()
+        self.next_p = None # set in self.loss()
+        self.lp_loss = None # set in self.loss()
+        self.scaled_lp_loss = None # set in self.loss()
+        self.n_sparsity_updates = n_sparsity_updates
+        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
+        self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
+        self.p_step_count = 0
+        self.current_sparsity_penalty = initial_sparsity_penalty # alpha
+        self.sparsity_queue_length = sparsity_queue_length
+        self.sparsity_queue = []
+
         self.warmup_steps = warmup_steps
         self.steps = steps
-        self.logging_parameters = ['p', 'lp_loss']
+        self.logging_parameters = ['p', 'next_p', 'lp_loss', 'scaled_lp_loss', 'current_sparsity_penalty']
         self.seed = seed
-
-        if device is None:
-            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
-        else:
-            self.device = device
-        self.ae.to(self.device)
+        self.wandb_name = wandb_name
 
         self.resample_steps = resample_steps
-
-
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
             self.steps_since_active = t.zeros(self.dict_size, dtype=int).to(self.device)
@@ -95,25 +107,6 @@ class PAnnealTrainer(SAETrainer):
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
-
-    @property
-    def config(self):
-        return {
-            'trainer_class' : "PAnnealTrainer",
-            'dict_class' : AutoEncoder,
-            'activation_dim' : self.activation_dim,
-            'dict_size' : self.dict_size,
-            'lr' : self.lr,
-            'sparsity_function' : self.sparsity_function,
-            'sparsity_penalty' : self.sparsity_penalty,
-            'p_start' : self.p_start,
-            'p_end' : self.p_end,
-            'anneal_start' : self.anneal_start,
-            'warmup_steps' : self.warmup_steps,
-            'resample_steps' : self.resample_steps,
-            'steps' : self.steps,
-            'seed' : self.seed,
-        }
 
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -146,27 +139,50 @@ class PAnnealTrainer(SAETrainer):
             ## decoder weight
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
+
+    def lp_norm(self, f, p):
+        norm_sq = f.pow(p).sum(dim=-1)
+        if self.sparsity_function == 'Lp^p':
+            return norm_sq.mean()
+        elif self.sparsity_function == 'Lp':
+            return norm_sq.pow(1/p).mean()
+        else:
+            raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
     
     def loss(self, x, step):
+        # Compute loss terms
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-   
-        relative_progress = max(step - self.anneal_start, 0) / (self.steps - self.anneal_start)
-        self.p = self.p_start + relative_progress * (self.p_end - self.p_start)
-        if self.sparsity_function == 'Lp':
-            self.lp_loss = f.norm(p=self.p, dim=-1).mean()
-        elif self.sparsity_function == 'Lp^p':
-            self.lp_loss = f.pow(self.p).sum(dim=-1).mean()
+        self.lp_loss = self.lp_norm(f, self.p)
 
+        if self.next_p is not None:
+            lp_loss_next = self.lp_norm(f, self.next_p)
+            self.sparsity_queue.append([self.lp_loss.item(), lp_loss_next.item()])
+            self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
+    
+        if step in self.sparsity_update_steps:
+            # Adapt sparsity penalty alpha
+            if self.next_p is not None:
+                local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
+                local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
+                self.current_sparsity_penalty = self.current_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
+            # Update p
+            self.p = self.p_values[self.p_step_count].item()
+            if self.p_step_count < self.n_sparsity_updates:
+                self.next_p = self.p_values[self.p_step_count+1].item()
+            self.p_step_count += 1
+
+        # Update dead feature count
         if self.steps_since_active is not None:
             # update steps_since_active
             deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
-        return l2_loss + self.sparsity_penalty * self.lp_loss
-
-
+        self.scaled_lp_loss = self.lp_loss * self.current_sparsity_penalty
+        return l2_loss + self.scaled_lp_loss
+    
+        
     def update(self, step, activations):
         activations = activations.to(self.device)
 
@@ -178,3 +194,25 @@ class PAnnealTrainer(SAETrainer):
 
         if self.resample_steps is not None and step % self.resample_steps == self.resample_steps - 1:
             self.resample_neurons(self.steps_since_active > self.resample_steps / 2, activations)
+
+    @property
+    def config(self):
+        return {
+            'trainer_class' : "PAnnealTrainer",
+            'dict_class' : "AutoEncoder",
+            'activation_dim' : self.activation_dim,
+            'dict_size' : self.dict_size,
+            'lr' : self.lr,
+            'sparsity_function' : self.sparsity_function,
+            'sparsity_penalty' : self.current_sparsity_penalty,
+            'p_start' : self.p_start,
+            'p_end' : self.p_end,
+            'anneal_start' : self.anneal_start,
+            'sparsity_queue_length' : self.sparsity_queue_length,
+            'n_sparsity_updates' : self.n_sparsity_updates,
+            'warmup_steps' : self.warmup_steps,
+            'resample_steps' : self.resample_steps,
+            'steps' : self.steps,
+            'seed' : self.seed,
+            'wandb_name' : self.wandb_name,
+        }

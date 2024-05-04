@@ -22,6 +22,7 @@ class StandardTrainerNew(SAETrainer):
                  steps=30000, # when when does training end
                  seed=None,
                  device=None,
+                 wandb_name='StandardTrainerNew_Anthropic',
     ):
         super().__init__(seed)
 
@@ -37,6 +38,7 @@ class StandardTrainerNew(SAETrainer):
         self.lambda_warm_steps=lambda_warm_steps
         self.decay_start=decay_start
         self.steps = steps
+        self.wandb_name = wandb_name
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
@@ -108,5 +110,6 @@ class StandardTrainerNew(SAETrainer):
             'seed' : self.seed,
             'activation_dim' : self.ae.activation_dim,
             'dict_size' : self.ae.dict_size,
-            'device' : self.device
+            'device' : self.device,
+            'wandb_name' : self.wandb_name,
         }
