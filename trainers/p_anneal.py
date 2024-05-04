@@ -143,10 +143,13 @@ class PAnnealTrainer(SAETrainer):
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
 
     def lp_norm(self, f, p):
-        if self.sparsity_function == 'Lp':
-            return t.norm(f, p=p, dim=-1).mean()
-        elif self.sparsity_function == 'Lp^p':
-            return t.norm(f, p=p, dim=-1).pow(p).mean()
+        norm_sq = f.pow(p).sum(dim=-1)
+        if self.sparsity_function == 'Lp^p':
+            return norm_sq.mean()
+        elif self.sparsity_function == 'Lp':
+            return norm_sq.pow(1/p).mean()
+        else:
+            raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
     
     def loss(self, x, step):
         # Compute loss terms
