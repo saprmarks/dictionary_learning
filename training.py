@@ -79,22 +79,23 @@ def trainSAE(
             log = {}
             with t.no_grad():
                 for i, trainer in enumerate(trainers):
+                    trainer_name = f'{trainer.config["wandb_name"]}-{i}'
                     x, x_hat, f, losslog = trainer.loss(x, step=step, logging=True)
-                    log.update({f'trainer{i}/{k}' : v for k, v in losslog.items()})
+                    log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
 
                     # L0
-                    log[f'trainer{i}/l0'] = (f != 0).float().sum(dim=-1).mean().item()
+                    log[f'{trainer_name}/l0'] = (f != 0).float().sum(dim=-1).mean().item()
 
                     # fraction of variance explained
                     total_variance = t.var(x, dim=0).sum()
                     residual_variance = t.var(x - x_hat, dim=0).sum()
                     frac_variance_explained = (1 - residual_variance / total_variance)
-                    log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
+                    log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
-                # log parameters from training 
-                trainer_log = trainer.get_logging_parameters()
-                for name, value in trainer_log.items():
-                    log[f'{trainer_name}/{name}'] = value
+                    # log parameters from training 
+                    trainer_log = trainer.get_logging_parameters()
+                    for name, value in trainer_log.items():
+                        log[f'{trainer_name}/{name}'] = value
 
                     # TODO get this to work
                     # metrics = evaluate(
