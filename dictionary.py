@@ -114,21 +114,35 @@ class GatedAutoEncoder(Dictionary, nn.Module):
     """
     An autoencoder with separate gating and magnitude networks.
     """
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, initialization='default', device=None):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.decoder_bias = nn.Parameter(t.zeros(activation_dim))
-        self.encoder = nn.Linear(activation_dim, dict_size, bias=False)
-        self.r_mag = nn.Parameter(t.zeros(dict_size))
-        self.gate_bias = nn.Parameter(t.zeros(dict_size))
-        self.mag_bias = nn.Parameter(t.zeros(dict_size))
+        self.decoder_bias = nn.Parameter(t.empty(activation_dim), device=device)
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=False, device=device)
+        self.r_mag = nn.Parameter(t.empty(dict_size), device=device)
+        self.gate_bias = nn.Parameter(t.empty(dict_size), device=device)
+        self.mag_bias = nn.Parameter(t.empty(dict_size), device=device)
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
+        if initialization == 'default':
+            self._reset_parameters()
+        else:
+            initialization(self)
 
-        # rows of decoder weight matrix are unit vectors
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        dec_weight = t.randn_like(self.decoder.weight)
-        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
-        self.decoder.weight = nn.Parameter(dec_weight)
+        def _reset_parameters(self):
+            """
+            Default method for initializing GatedSAE weights.
+            """
+            # biases are initialized to zero
+            t.zero_(self.decoder_bias)
+            t.zero_(self.r_mag)
+            t.zero_(self.gate_bias)
+            t.zero_(self.mag_bias)
+
+            # decoder weights are initialized to random unit vectors
+            dec_weight = t.randn_like(self.decoder.weight)
+            dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+            self.decoder.weight.copy_(dec_weight)
 
     def encode(self, x, gate_only=False):
         """
@@ -158,6 +172,10 @@ class GatedAutoEncoder(Dictionary, nn.Module):
     def forward(self, x, output_features=False, gate_only=False):
         f = self.encode(x, gate_only=gate_only)
         x_hat = self.decode(f)
+
+        # TODO: modify so that x_hat depends on f
+        f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+
         if output_features:
             return x_hat, f
         else:
