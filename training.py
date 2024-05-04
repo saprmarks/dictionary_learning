@@ -71,6 +71,7 @@ def sae_loss(
         in_acts = out_acts = activations
 
     ghost_grads = False
+    ghost_loss = None
     if ghost_threshold is not None:
         if num_samples_since_activated is None:
             raise ValueError("num_samples_since_activated must be provided for ghost grads")
