@@ -68,45 +68,39 @@ def trainSAE(
     else:
         save_dirs = [None for _ in trainer_configs]
     
-    for step, activations in enumerate(tqdm(data, total=steps)):
+    for step, x in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
         
         # logging
         if log_steps is not None and step % log_steps == 0:
             log = {}
-            for i, trainer in enumerate(trainers):
-                x_hat, f = trainer.ae(activations, output_features=True)
-                l2_loss = t.linalg.norm(activations - x_hat, dim=-1).mean()
-                l1_loss = f.norm(p=1, dim=-1).mean()
-                l0 = (f != 0).float().sum(dim=-1).mean()
-                frac_alive = (f != 0).float().mean(dim=-1).mean()
+            with t.no_grad():
+                for i, trainer in enumerate(trainers):
+                    x, x_hat, f, losslog = trainer.loss(x, step=step, logging=True)
+                    log.update({f'trainer{i}/{k}' : v for k, v in losslog.items()})
 
-                #compute variance explained
-                total_variance = t.var(activations, dim=0).sum()
-                residual_variance = t.var(activations - x_hat, dim=0).sum()
-                frac_variance_explained = (1 - residual_variance / total_variance)
+                    # L0
+                    log[f'trainer{i}/l0'] = (f != 0).float().sum(dim=-1).mean().item()
 
-                log[f'trainer{i}/l2_loss'] = l2_loss.item()
-                log[f'trainer{i}/l1_loss'] = l1_loss.item()
-                log[f'trainer{i}/l0'] = l0.item()
-                log[f'trainer{i}/frac_alive'] = frac_alive.item()
-                log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
+                    # fraction of variance explained
+                    total_variance = t.var(x, dim=0).sum()
+                    residual_variance = t.var(x - x_hat, dim=0).sum()
+                    frac_variance_explained = (1 - residual_variance / total_variance)
+                    log[f'trainer{i}/frac_variance_explained'] = frac_variance_explained.item()
 
-                # log parameters from training 
-                trainer_log = trainer.get_logging_parameters()
-                for name, value in trainer_log.items():
-                    log[f'trainer{i}/{name}'] = value
+                    # fraction alive
+                    log[f'trainer{i}/frac_alive'] = (f != 0).any(dim=0).float().mean().item()
 
-                # TODO get this to work
-                # metrics = evaluate(
-                #     trainer.ae, 
-                #     data, 
-                #     device=trainer.device
-                # )
-                # log.update(
-                #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
-                # )
+                    # TODO get this to work
+                    # metrics = evaluate(
+                    #     trainer.ae, 
+                    #     data, 
+                    #     device=trainer.device
+                    # )
+                    # log.update(
+                    #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
+                    # )
             wandb.log(log, step=step)
 
         # saving
@@ -122,7 +116,7 @@ def trainSAE(
                     
         # training
         for trainer in trainers:
-            trainer.update(step, activations)
+            trainer.update(step, x)
     
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):

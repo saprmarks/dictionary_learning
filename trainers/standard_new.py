@@ -5,6 +5,7 @@ import torch as t
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import AutoEncoderNew
+from collections import namedtuple
 
 class StandardTrainerNew(SAETrainer):
     """
@@ -14,7 +15,7 @@ class StandardTrainerNew(SAETrainer):
                  dict_class=AutoEncoderNew,
                  activation_dim=512,
                  dict_size=64*512,
-                 lr=5e-5, 
+                 lr=5e-4, 
                  l1_penalty=1e-1,
                  lambda_warm_steps=1500, # steps over which to warm up the l1 penalty
                  decay_start=24000, # when does the lr decay start
@@ -45,28 +46,45 @@ class StandardTrainerNew(SAETrainer):
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=lr)
         def lr_fn(step):
-            if step > steps: raise ValueError("step > steps")
             if step < decay_start:
                 return 1.
             else:
                 return (steps - step) / (steps - decay_start)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
-    def loss(self, step, x):
+    def loss(self, x, step=None, logging=False):
         x_hat, f = self.ae(x, output_features=True)
 
+        l1_penalty = self.l1_penalty
         l1_penalty = min(1., step / self.lambda_warm_steps) * self.l1_penalty
 
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
         L_sparse = f.norm(p=1, dim=-1).mean()
-        return L_recon + l1_penalty * L_sparse
+
+        loss = L_recon + l1_penalty * L_sparse
+
+        if not logging:
+            return loss
+        else:
+            return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
+                x, x_hat, f,
+                {
+                    'mse_loss' : L_recon.item(),
+                    'sparsity_loss' : L_sparse.item(),
+                    'l1_penalty' : l1_penalty,
+                    'loss' : loss.item()
+                }
+            )
+    
 
     def update(self, step, x):
         x = x.to(self.device)
-        x = x / x.norm(dim=-1, keepdim=True).mean() * (self.ae.activation_dim ** 0.5)
+        
+        # normalization was removed
+        # x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
 
         self.optimizer.zero_grad()
-        loss = self.loss(step, x)
+        loss = self.loss(x, step=step)
         loss.backward()
 
         # clip grad norm
@@ -74,6 +92,8 @@ class StandardTrainerNew(SAETrainer):
 
         self.optimizer.step()
         self.scheduler.step()
+
+        return loss.item()
 
     @property
     def config(self):
