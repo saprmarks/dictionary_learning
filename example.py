@@ -32,15 +32,26 @@ buffer = ActivationBuffer(
     device=DEVICE,  # doesn't have to be the same device that you train your autoencoder on
 )  # buffer will return batches of tensors of dimension = submodule's output dimension
 
-# train the sparse autoencoder (SAE)
-ae = trainSAE(
-    buffer,
-    activation_dim,
-    dictionary_size,
-    lr=3e-4,
-    sparsity_penalty=1e-3,
-    device=DEVICE,
-    use_gated_sae=True,
-)
+# train the sparse autoencoders (SAEs)
+if __name__ == "__main__":
+    trained_gated_ae = trainSAE(
+        buffer,
+        activation_dim,
+        dictionary_size,
+        lr=3e-4,
+        sparsity_penalty=1e-3,
+        device=DEVICE,
+        use_gated_sae=True,
+    )
 
-print("Done!")
+    trained_regular_ae = trainSAE(
+        buffer,
+        activation_dim,
+        dictionary_size,
+        lr=3e-4,
+        sparsity_penalty=1e-3,
+        device=DEVICE,
+        use_gated_sae=False,
+    )
+
+    print("Done!")
