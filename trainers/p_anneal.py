@@ -43,7 +43,7 @@ class PAnnealTrainer(SAETrainer):
                  initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
                  p_start=1, # starting value of p (constant throughout warmup)
-                 p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
+                 p_end=0.1, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded, smallest value is 0.1
                  n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
                  sparsity_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
                  resample_steps=None, # number of steps after which to resample dead neurons
@@ -74,6 +74,8 @@ class PAnnealTrainer(SAETrainer):
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
+        if p_end < 0.1:
+            raise ValueError("p_end must be at least 0.1. L_p norm returns NaN for p < 0.1.")
         self.p = p_start # p is set in self.loss()
         self.next_p = None # set in self.loss()
         self.lp_loss = None # set in self.loss()
@@ -82,14 +84,13 @@ class PAnnealTrainer(SAETrainer):
         self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
         self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
         self.p_step_count = 0
-        self.initial_sparsity_penalty = initial_sparsity_penalty
         self.current_sparsity_penalty = initial_sparsity_penalty # alpha
         self.sparsity_queue_length = sparsity_queue_length
         self.sparsity_queue = []
 
         self.warmup_steps = warmup_steps
         self.steps = steps
-        self.logging_parameters = ['p', 'lp_loss', 'current_sparsity_penalty', 'scaled_lp_loss']
+        self.logging_parameters = ['p', 'next_p', 'lp_loss', 'scaled_lp_loss', 'current_sparsity_penalty']
         self.seed = seed
         self.wandb_name = wandb_name
 
