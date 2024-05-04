@@ -75,8 +75,9 @@ class PAnnealTrainer(SAETrainer):
         self.p_start = p_start
         self.p_end = p_end
         self.p = p_start # p is set in self.loss()
-        self.next_p = p_start
-        self.lp_loss = None # lp_loss is set in self.loss()
+        self.next_p = None # set in self.loss()
+        self.lp_loss = None # set in self.loss()
+        self.scaled_lp_loss = None # set in self.loss()
         self.n_sparsity_updates = n_sparsity_updates
         self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
         self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
@@ -88,7 +89,7 @@ class PAnnealTrainer(SAETrainer):
 
         self.warmup_steps = warmup_steps
         self.steps = steps
-        self.logging_parameters = ['p', 'lp_loss', 'current_sparsity_penalty']
+        self.logging_parameters = ['p', 'lp_loss', 'current_sparsity_penalty', 'scaled_lp_loss']
         self.seed = seed
         self.wandb_name = wandb_name
 
@@ -151,17 +152,19 @@ class PAnnealTrainer(SAETrainer):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         self.lp_loss = self.lp_norm(f, self.p)
-        lp_loss_next = self.lp_norm(f, self.next_p)
 
-        # Keep a buffer of recent feature activations for determining sparsity penalty alpha
-        self.sparsity_queue.append([self.lp_loss.item(), lp_loss_next.item()])
-        self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
-   
-        # Adapt sparsity penalty alpha
+        if self.next_p is not None:
+            lp_loss_next = self.lp_norm(f, self.next_p)
+            self.sparsity_queue.append([self.lp_loss.item(), lp_loss_next.item()])
+            self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
+    
         if step in self.sparsity_update_steps:
-            local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
-            local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
-            self.current_sparsity_penalty = self.initial_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
+            # Adapt sparsity penalty alpha
+            if self.next_p is not None:
+                local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
+                local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
+                self.current_sparsity_penalty = self.current_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
+            # Update p
             self.p = self.p_values[self.p_step_count].item()
             if self.p_step_count < self.n_sparsity_updates:
                 self.next_p = self.p_values[self.p_step_count+1].item()
@@ -174,7 +177,8 @@ class PAnnealTrainer(SAETrainer):
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
-        return l2_loss + self.current_sparsity_penalty * self.lp_loss
+        self.scaled_lp_loss = self.lp_loss * self.current_sparsity_penalty
+        return l2_loss + self.scaled_lp_loss
     
         
     def update(self, step, activations):
