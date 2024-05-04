@@ -152,7 +152,10 @@ def gated_sae_loss(
     # Apply a reconstruction loss on the gating encoder to encourage it to
     # reconstruct well. We apply a stop gradient for the decoding.
     with t.no_grad():
-        gating_only_reconstruction = gated_autoencoder.decode(relued_gates)
+        decoder_weights = gated_autoencoder.decoder.weight
+        decoder_bias = gated_autoencoder.decoder.bias
+
+    gating_only_reconstruction = relued_gates @ decoder_weights + decoder_bias
     gating_reconstruction_loss = mse_criterion(activations, gating_only_reconstruction)
 
     if output_all_losses:
