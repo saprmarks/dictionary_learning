@@ -3,6 +3,7 @@ from nnsight import LanguageModel
 
 from .config import DEBUG
 
+tracer_kwargs: dict
 if DEBUG:
     tracer_kwargs = {"scan": True, "validate": True}
 else:
@@ -105,7 +106,7 @@ class ActivationBuffer:
             with t.no_grad():
                 with self.model.trace(
                     self.text_batch(),
-                    kwargs=tracer_kwargs,
+                    **tracer_kwargs,
                     invoker_args={"truncation": True, "max_length": self.ctx_len},
                 ):
                     if self.io == "in":

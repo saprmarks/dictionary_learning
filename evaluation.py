@@ -9,6 +9,7 @@ from nnsight import LanguageModel
 from .config import DEBUG
 from .training import sae_loss
 
+tracer_kwargs: dict
 if DEBUG:
     tracer_kwargs = {"scan": True, "validate": True}
 else:
@@ -44,7 +45,7 @@ def loss_recovered(
         invoker_args = {"truncation": True, "max_length": max_len}
 
     # unmodified logits
-    with t.no_grad(), model.trace(text, invoker_args=invoker_args, kwargs=tracer_kwargs):
+    with t.no_grad(), model.trace(text, invoker_args=invoker_args, **tracer_kwargs):
         output = model.output.save()
     try:
         logits_original = output.value.logits
@@ -52,7 +53,7 @@ def loss_recovered(
         logits_original = output.value
 
     # logits when replacing component output with reconstruction by autoencoder
-    with t.no_grad(), model.trace(text, kwargs=tracer_kwargs, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
         for submodule, dictionary in zip(submodules, dictionaries):
             if io == "in":
                 if is_tuple[submodule]:
@@ -80,7 +81,7 @@ def loss_recovered(
         logits_reconstructed = output.value
 
     # logits when zero ablating components
-    with t.no_grad(), model.trace(text, kwargs=tracer_kwargs, invoker_args=invoker_args):
+    with t.no_grad(), model.trace(text, **tracer_kwargs, invoker_args=invoker_args):
         for submodule in submodules:
             if io == "in":
                 if is_tuple[submodule]:
