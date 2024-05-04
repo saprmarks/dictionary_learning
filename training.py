@@ -6,6 +6,7 @@ import os
 from typing import Optional, Union
 
 import torch as t
+import torch.nn as nn
 from tqdm import tqdm
 
 from .dictionary import AbstractAutoEncoder, AutoEncoder, GatedAutoEncoder
@@ -129,6 +130,8 @@ def gated_sae_loss(
     Compute the loss of a gated autoencoder on some activations
     """
 
+    mse_criterion = nn.MSELoss()
+
     (
         reconstructed_activations,
         _features,
@@ -139,9 +142,7 @@ def gated_sae_loss(
 
     # We’ll use the reconstruction from the baseline forward pass to train
     # the magnitudes encoder and decoder.
-    mse_reconstruction_loss = t.linalg.norm(
-        activations - reconstructed_activations, dim=-1
-    ).mean()
+    mse_reconstruction_loss = mse_criterion(activations, reconstructed_activations)
 
     # We apply a L1 penalty on the gated encoder activations (pre-binarising,
     # post-ReLU) to incentivise them to be sparse
@@ -152,9 +153,7 @@ def gated_sae_loss(
     # reconstruct well. We apply a stop gradient for the decoding.
     with t.no_grad():
         gating_only_reconstruction = gated_autoencoder.decode(relued_gates)
-    gating_reconstruction_loss = t.linalg.norm(
-        activations - gating_only_reconstruction, dim=-1
-    ).mean()
+    gating_reconstruction_loss = mse_criterion(activations, gating_only_reconstruction)
 
     if output_all_losses:
         return mse_reconstruction_loss, gating_sparsity_loss, gating_reconstruction_loss
