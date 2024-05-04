@@ -5,6 +5,7 @@ import torch as t
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import AutoEncoder
+from collections import namedtuple
 
 class ConstrainedAdam(t.optim.Adam):
     """
@@ -115,7 +116,7 @@ class StandardTrainer(SAETrainer):
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
     
-    def loss(self, x):
+    def loss(self, x, logging=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
@@ -126,7 +127,20 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
-        return l2_loss + self.l1_penalty * l1_loss
+        loss = l2_loss + self.l1_penalty * l1_loss
+
+        if not logging:
+            return loss
+        else:
+            return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
+                x, x_hat, f,
+                {
+                    'l2_loss' : l2_loss.item(),
+                    'mse_loss' : (x - x_hat).pow(2).sum(dim=-1).mean().item(),
+                    'sparsity_loss' : l1_loss.item(),
+                    'loss' : loss.item()
+                }
+            )
 
 
     def update(self, step, activations):

@@ -134,19 +134,22 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         """
         If gate_only is True, instead return ReLU(gating preactivations)
         """
+        x_enc = self.encoder(x - self.decoder_bias)
+
         if not gate_only:
+
             # gating network
-            pi_gate = self.encoder(x - self.decoder_bias) + self.gate_bias
+            pi_gate = x_enc + self.gate_bias
             f_gate = (pi_gate > 0).float()
 
             # magnitude network
-            pi_mag = self.r_mag.exp() * self.encoder(x - self.decoder_bias) + self.mag_bias
+            pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
             f_mag = nn.ReLU()(pi_mag)
 
             return f_gate * f_mag
         else:
             # only gating network
-            pi_gate = self.encoder(x - self.decoder_bias) + self.gate_bias
+            pi_gate = x_enc + self.gate_bias
             return nn.ReLU()(pi_gate)
 
     def decode(self, f):
@@ -159,6 +162,18 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
+
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = GatedAutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
 
 # TODO merge this with AutoEncoder
 class AutoEncoderNew(Dictionary, nn.Module):
@@ -206,7 +221,7 @@ class AutoEncoderNew(Dictionary, nn.Module):
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict['encoder.weight'].shape
-        autoencoder = AutoEncoder(activation_dim, dict_size)
+        autoencoder = AutoEncoderNew(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)

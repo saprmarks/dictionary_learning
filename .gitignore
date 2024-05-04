@@ -160,3 +160,6 @@ cython_debug/
 #.idea/
 dictionaries
 wandb
+experiment.py
+run_experiment.sh
+nohup.out

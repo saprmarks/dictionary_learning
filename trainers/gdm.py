@@ -6,6 +6,7 @@ import torch as t
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import GatedAutoEncoder
+from collections import namedtuple
 
 class ConstrainedAdam(t.optim.Adam):
     """
@@ -72,7 +73,7 @@ class GatedSAETrainer(SAETrainer):
             return min(1, step / warmup_steps)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, warmup_fn)
 
-    def loss(self, x):
+    def loss(self, x, logging=False, **kwargs):
         x_hat = self.ae(x)
         f_gate = self.ae.encode(x, gate_only=True)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
@@ -81,7 +82,20 @@ class GatedSAETrainer(SAETrainer):
         L_sparse = t.linalg.norm(f_gate, ord=1, dim=-1).mean()
         L_aux = (x - x_hat_gate).pow(2).sum(dim=-1).mean()
 
-        return L_recon + self.l1_penalty * L_sparse + L_aux
+        loss = L_recon + self.l1_penalty * L_sparse + L_aux
+
+        if not logging:
+            return loss
+        else:
+            return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
+                x, x_hat, self.ae.encode(x),
+                {
+                    'mse_loss' : L_recon.item(),
+                    'sparsity_loss' : L_sparse.item(),
+                    'aux_loss' : L_aux.item(),
+                    'loss' : loss.item()
+                }
+            )
     
     def update(self, step, x):
         x = x.to(self.device)
