@@ -115,10 +115,14 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         self.dict_size = dict_size
 
         # Using tied bias term for encoder and decoder
-        self.bias = nn.Parameter(t.zeros(activation_dim))
+        self.neuron_bias = nn.Parameter(t.zeros(activation_dim))
 
-        self.active_features_encoder = nn.Linear(activation_dim, dict_size, bias=True)
-        self.feature_magnitudes_encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=False)
+
+        self.feature_magnitude_bias = nn.Parameter(t.zeros(dict_size))
+        self.r_magnitude = nn.Parameter(t.zeros(dict_size))
+
+        self.gating_bias = nn.Parameter(t.zeros(dict_size))
 
         # rows of decoder weight matrix are unit vectors
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
@@ -130,14 +134,18 @@ class GatedAutoEncoder(Dictionary, nn.Module):
 
     def encode(self, x: t.Tensor) -> tuple[t.Tensor, t.Tensor, t.IntTensor, t.Tensor]:
         # Apply pre-encoder bias
-        x_centered = x - self.bias
+        x_centered = x - self.neuron_bias
+        naive_features = self.encoder(x_centered)
 
-        # Gating encoder (estimates which features are active)
-        active_features_pre_binarisation = self.active_features_encoder(x_centered)
+        # Magnitudes encoder path (estimates active features’ magnitudes)
+        magnitude_scale = t.exp(self.r_magnitude)
+        feature_magnitudes = self.act_fn(
+            magnitude_scale * naive_features + self.feature_magnitude_bias
+        )  # scale and shift
+
+        # Gating encoder path (estimates which features are active)
+        active_features_pre_binarisation = naive_features + self.gating_bias
         active_features: t.IntTensor = active_features_pre_binarisation > 0
-
-        # Magnitudes encoder (estimates active features’ magnitudes)
-        feature_magnitudes = self.act_fn(self.feature_magnitudes_encoder(x_centered))
 
         # Element-wise multiplication of active features and their magnitudes
         features = active_features * feature_magnitudes
@@ -145,7 +153,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         return features, active_features_pre_binarisation, active_features, feature_magnitudes
 
     def decode(self, features: t.Tensor) -> t.Tensor:
-        features = self.decoder(features) + self.bias
+        features = self.decoder(features) + self.neuron_bias
         return features
 
     def forward(
