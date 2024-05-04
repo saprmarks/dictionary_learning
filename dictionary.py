@@ -148,7 +148,12 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         features = self.decoder(features) + self.bias
         return features
 
-    def forward(self, x: t.Tensor, output_features: bool = False):
+    def forward(
+        self,
+        x: t.Tensor,
+        output_features: bool = False,
+        output_intermediate_activations: bool = False,
+    ):
         """
         Forward pass of the Gated Sparse Autoencoder.
         x : activations to be autoencoded
@@ -159,7 +164,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             self.encode(x)
         )
         x_hat = self.decode(features)
-        if output_features:
+        if output_intermediate_activations:
             return (
                 x_hat,
                 features,
@@ -167,6 +172,8 @@ class GatedAutoEncoder(Dictionary, nn.Module):
                 active_features,
                 feature_magnitudes,
             )
+        elif output_features:
+            return x_hat, features
         else:
             return x_hat
 

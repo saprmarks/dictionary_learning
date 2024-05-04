@@ -138,7 +138,7 @@ def gated_sae_loss(
         active_features_pre_binarisation,
         _active_features,
         _feature_magnitudes,
-    ) = gated_autoencoder(activations, output_features=True)
+    ) = gated_autoencoder(activations, output_intermediate_activations=True)
 
     # We’ll use the reconstruction from the baseline forward pass to train
     # the magnitudes encoder and decoder.
