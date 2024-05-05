@@ -174,6 +174,62 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+    
+class JumpAutoEncoder(Dictionary, nn.Module):
+    """
+    An autoencoder with jump ReLUs. Replacement for GatedAutoEncoder.
+    """
+    def __init__(self, activation_dim, dict_size):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.bias = nn.Parameter(t.zeros(activation_dim))
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        
+        # jump values added to activated features
+        self.jump = nn.Parameter(t.zeros(dict_size))
+
+        # rows of decoder weight matrix are unit vectors
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
+
+    def encode(self, x, output_pre_jump=False):
+        pre_jump = nn.ReLU()(self.encoder(x - self.bias))
+        f = pre_jump + self.jump * (pre_jump > 0)
+        if output_pre_jump:
+            return f, pre_jump
+        else:
+            return f
+    
+    def decode(self, f):
+        return self.decoder(f) + self.bias
+    
+    def forward(self, x, output_features=False):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
+        """
+        f, pre_jump = self.encode(x, output_pre_jump=True)
+        x_hat = self.decode(f)
+        if output_features:
+            return x_hat, f, pre_jump
+        else:
+            return x_hat
+            
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = JumpAutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
 
 # TODO merge this with AutoEncoder
 class AutoEncoderNew(Dictionary, nn.Module):
