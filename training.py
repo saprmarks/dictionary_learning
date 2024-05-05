@@ -35,15 +35,6 @@ def trainSAE(
     """
     Train SAEs using the given trainers
     """
-    if log_steps is not None:
-        wandb.init(
-            entity="sae-training",
-            project="sae-training",
-            config={f'{config["wandb_name"]}-{i}' : config for i, config in enumerate(trainer_configs)}
-        )
-        # process save_dir in light of run name
-        if save_dir is not None:
-            save_dir = save_dir.format(run=wandb.run.name)
 
     trainers = []
     for config in trainer_configs:
@@ -54,6 +45,16 @@ def trainSAE(
                 **config
             )
         )
+
+    if log_steps is not None:
+        wandb.init(
+            entity="sae-training",
+            project="sae-training",
+            config={f'{trainer.config["wandb_name"]}-{i}' : trainer.config for i, trainer in enumerate(trainers)}
+        )
+        # process save_dir in light of run name
+        if save_dir is not None:
+            save_dir = save_dir.format(run=wandb.run.name)
 
     # make save dirs, export config
     if save_dir is not None:
