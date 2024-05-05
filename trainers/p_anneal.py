@@ -74,21 +74,19 @@ class PAnnealTrainer(SAETrainer):
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
-        self.p = p_start # p is set in self.loss()
-        self.next_p = None # set in self.loss()
-        self.lp_loss = None # set in self.loss()
-        self.scaled_lp_loss = None # set in self.loss()
+        self.p = p_start
+        self.next_p = None
         self.n_sparsity_updates = n_sparsity_updates
         self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
         self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
         self.p_step_count = 0
-        self.current_sparsity_penalty = initial_sparsity_penalty # alpha
+        self.sparsity_coeff = initial_sparsity_penalty # alpha
         self.sparsity_queue_length = sparsity_queue_length
         self.sparsity_queue = []
 
         self.warmup_steps = warmup_steps
         self.steps = steps
-        self.logging_parameters = ['p', 'next_p', 'lp_loss', 'scaled_lp_loss', 'current_sparsity_penalty']
+        self.logging_parameters = ['p', 'next_p', 'lp_loss', 'scaled_lp_loss', 'sparsity_coeff']
         self.seed = seed
         self.wandb_name = wandb_name
 
@@ -149,11 +147,12 @@ class PAnnealTrainer(SAETrainer):
         else:
             raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
     
-    def loss(self, x, step):
+    def loss(self, x, step, logging=False):
         # Compute loss terms
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-        self.lp_loss = self.lp_norm(f, self.p)
+        lp_loss = self.lp_norm(f, self.p)
+        scaled_lp_loss = lp_loss * self.sparsity_coeff
 
         if self.next_p is not None:
             lp_loss_next = self.lp_norm(f, self.next_p)
@@ -165,7 +164,7 @@ class PAnnealTrainer(SAETrainer):
             if self.next_p is not None:
                 local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
                 local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
-                self.current_sparsity_penalty = self.current_sparsity_penalty * (local_sparsity_new / local_sparsity_old).item()
+                self.sparsity_coeff = self.sparsity_coeff * (local_sparsity_new / local_sparsity_old).item()
             # Update p
             self.p = self.p_values[self.p_step_count].item()
             if self.p_step_count < self.n_sparsity_updates:
@@ -177,17 +176,26 @@ class PAnnealTrainer(SAETrainer):
             # update steps_since_active
             deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
-            self.steps_since_active[~deads] = 0
-        
-        self.scaled_lp_loss = self.lp_loss * self.current_sparsity_penalty
-        return l2_loss + self.scaled_lp_loss
+            self.steps_since_active[~deads] = 0        
+    
+        if logging is False:
+            return l2_loss + scaled_lp_loss
+        else: 
+            loss_log = {
+                'p' : self.p,
+                'next_p' : self.next_p,
+                'lp_loss' : lp_loss.item(),
+                'scaled_lp_loss' : scaled_lp_loss.item(),
+                'sparsity_coeff' : self.sparsity_coeff,
+            }
+            return x, x_hat, f, loss_log
     
         
     def update(self, step, activations):
         activations = activations.to(self.device)
 
         self.optimizer.zero_grad()
-        loss = self.loss(activations, step)
+        loss = self.loss(activations, step, logging=False)
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
@@ -204,7 +212,7 @@ class PAnnealTrainer(SAETrainer):
             'dict_size' : self.dict_size,
             'lr' : self.lr,
             'sparsity_function' : self.sparsity_function,
-            'sparsity_penalty' : self.current_sparsity_penalty,
+            'sparsity_penalty' : self.sparsity_coeff,
             'p_start' : self.p_start,
             'p_end' : self.p_end,
             'anneal_start' : self.anneal_start,
