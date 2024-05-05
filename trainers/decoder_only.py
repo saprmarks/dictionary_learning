@@ -58,13 +58,19 @@ class DecoderOnlySAETrainer(SAETrainer):
         self.warmup_steps = warmup_steps
         self.target_l0 = target_l0
         self.wandb_name = wandb_name
-        self.resample_steps = resample_steps
 
         if device is None:
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
         else:
             self.device = device
         self.ae.to(self.device)
+
+        self.resample_steps = resample_steps
+        if self.resample_steps is not None:
+            # how many steps since each neuron was last activated?
+            self.steps_since_active = t.zeros(self.ae.dict_size, dtype=int).to(self.device)
+        else:
+            self.steps_since_active = None 
 
         self.optimizer = ConstrainedAdam(
             self.ae.parameters(),
@@ -112,8 +118,15 @@ class DecoderOnlySAETrainer(SAETrainer):
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
 
     def loss(self, x):
-        x_hat = self.ae(x)
+        x_hat, f = self.ae(x, output_features=True)
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
+
+        if self.steps_since_active is not None:
+            # update steps_since_active
+            deads = (f == 0).all(dim=0)
+            self.steps_since_active[deads] += 1
+            self.steps_since_active[~deads] = 0
+
         return L_recon
 
     def update(self, step, activations):
