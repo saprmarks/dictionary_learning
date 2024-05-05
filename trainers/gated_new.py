@@ -2,6 +2,7 @@
 Combines gated SAEs with Anthropic's training scheme from their April update
 """
 import torch as t
+import torch.nn.init as init
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import GatedAutoEncoder
@@ -12,15 +13,15 @@ def initialize(ae):
     """
     Initialization scheme for the autoencoder.
     """
-    t.zero_(ae.decoder_bias)
-    t.zero_(ae.r_mag)
-    t.zero_(ae.gate_bias)
-    t.zero_(ae.mag_bias)
+    init.zeros_(ae.decoder_bias)
+    init.zeros_(ae.r_mag)
+    init.zeros_(ae.gate_bias)
+    init.zeros_(ae.mag_bias)
 
-    w = t.randn(ae.activation_dim, ae.dict_size)
+    w = t.randn_like(ae.encoder.weight)
     w = w / w.norm(dim=0, keepdim=True)
-    ae.encoder.weight.copy_(w.T)
-    ae.decoder.weight.copy_(w)
+    ae.encoder.weight = t.nn.Parameter(w)
+    ae.decoder.weight = t.nn.Parameter(w.T)
 
 
 class GatedTrainerNew(SAETrainer):
@@ -46,7 +47,6 @@ class GatedTrainerNew(SAETrainer):
             self.device = 'cuda' if t.cuda.is_available() else 'cpu'
         else:
             self.device = device
-        self.ae.to(self.device)
 
         if seed is not None:
             t.manual_seed(seed)

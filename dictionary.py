@@ -5,6 +5,7 @@ Defines the dictionary classes
 from abc import ABC, abstractmethod
 import torch as t
 import torch.nn as nn
+import torch.nn.init as init
 
 class Dictionary(ABC):
     """
@@ -118,31 +119,31 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.decoder_bias = nn.Parameter(t.empty(activation_dim), device=device)
+        self.decoder_bias = nn.Parameter(t.empty(activation_dim, device=device))
         self.encoder = nn.Linear(activation_dim, dict_size, bias=False, device=device)
-        self.r_mag = nn.Parameter(t.empty(dict_size), device=device)
-        self.gate_bias = nn.Parameter(t.empty(dict_size), device=device)
-        self.mag_bias = nn.Parameter(t.empty(dict_size), device=device)
+        self.r_mag = nn.Parameter(t.empty(dict_size, device=device))
+        self.gate_bias = nn.Parameter(t.empty(dict_size, device=device))
+        self.mag_bias = nn.Parameter(t.empty(dict_size, device=device))
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
         if initialization == 'default':
             self._reset_parameters()
         else:
             initialization(self)
 
-        def _reset_parameters(self):
-            """
-            Default method for initializing GatedSAE weights.
-            """
-            # biases are initialized to zero
-            t.zero_(self.decoder_bias)
-            t.zero_(self.r_mag)
-            t.zero_(self.gate_bias)
-            t.zero_(self.mag_bias)
+    def _reset_parameters(self):
+        """
+        Default method for initializing GatedSAE weights.
+        """
+        # biases are initialized to zero
+        init.zeros_(self.decoder_bias)
+        init.zeros_(self.r_mag)
+        init.zeros_(self.gate_bias)
+        init.zeros_(self.mag_bias)
 
-            # decoder weights are initialized to random unit vectors
-            dec_weight = t.randn_like(self.decoder.weight)
-            dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
-            self.decoder.weight.copy_(dec_weight)
+        # decoder weights are initialized to random unit vectors
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
 
     def encode(self, x, gate_only=False):
         """
