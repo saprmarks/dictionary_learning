@@ -159,12 +159,12 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
         f_mag = nn.ReLU()(pi_mag)
 
-        x_hat = f_gate * f_mag
+        f = f_gate * f_mag
         
         if return_gate:
-            return x_hat, nn.ReLU()(pi_gate)
+            return f, nn.ReLU()(pi_gate)
 
-        return x_hat
+        return f
 
     def decode(self, f):
         return self.decoder(f) + self.decoder_bias

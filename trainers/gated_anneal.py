@@ -150,7 +150,7 @@ class GatedAnnealTrainer(SAETrainer):
             raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
         
     def loss(self, x, step, logging=False, **kwargs):
-        f, f_gate = self.ae.encode(x)
+        f, f_gate = self.ae.encode(x, return_gate=True)
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
 
