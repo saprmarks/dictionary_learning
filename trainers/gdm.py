@@ -74,8 +74,8 @@ class GatedSAETrainer(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, warmup_fn)
 
     def loss(self, x, logging=False, **kwargs):
-        f, f_gate = self.ae.encode(x)
-        x_hat = self.ae.decode(f)
+        x_hat, f_gate = self.ae.encode(x, return_gate=True)
+        
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
 
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
@@ -88,7 +88,7 @@ class GatedSAETrainer(SAETrainer):
             return loss
         else:
             return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
-                x, x_hat, f,
+                x, x_hat, self.ae.encode(x),
                 {
                     'mse_loss' : L_recon.item(),
                     'sparsity_loss' : L_sparse.item(),

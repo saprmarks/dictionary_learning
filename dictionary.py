@@ -145,7 +145,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
 
-    def encode(self, x):
+    def encode(self, x, return_gate=False):
         """
         Returns features, gate value (pre-Heavyside)
         """
@@ -159,13 +159,18 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
         f_mag = nn.ReLU()(pi_mag)
 
-        return f_gate * f_mag, nn.ReLU()(pi_gate)
+        x_hat = f_gate * f_mag
+        
+        if return_gate:
+            return x_hat, nn.ReLU()(pi_gate)
+
+        return x_hat
 
     def decode(self, f):
         return self.decoder(f) + self.decoder_bias
     
     def forward(self, x, output_features=False):
-        f, _ = self.encode(x)
+        f = self.encode(x)
         x_hat = self.decode(f)
 
         # TODO: modify so that x_hat depends on f
