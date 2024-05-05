@@ -1,19 +1,19 @@
+"""
+Implements the training scheme for a gated SAE described in https://arxiv.org/abs/2404.16014
+"""
+
 import torch as t
-
-"""
-Implements the standard SAE training scheme.
-"""
-
-from ..dictionary import AutoEncoder
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
+from ..dictionary import GatedAutoEncoder
+from collections import namedtuple
 
 class ConstrainedAdam(t.optim.Adam):
     """
     A variant of Adam where some of the parameters are constrained to have unit norm.
     """
     def __init__(self, params, constrained_params, lr):
-        super().__init__(params, lr=lr)
+        super().__init__(params, lr=lr, betas=(0, 0.999))
         self.constrained_params = list(constrained_params)
     
     def step(self, closure=None):
@@ -28,18 +28,17 @@ class ConstrainedAdam(t.optim.Adam):
                 # renormalize the constrained parameters
                 p /= p.norm(dim=0, keepdim=True)
 
-class PAnnealTrainer(SAETrainer):
+class GatedAnnealTrainer(SAETrainer):
     """
-    SAE training scheme with the option to anneal the sparsity parameter p.
-    You can further choose to use Lp or Lp^p sparsity.
+    Gated SAE training scheme with p-annealing.
     """
-    def __init__(self, 
-                 dict_class=AutoEncoder,
+    def __init__(self,
+                 dict_class=GatedAutoEncoder,
                  activation_dim=512,
-                 dict_size=64*512, 
-                 lr=1e-3, 
+                 dict_size=64*512,
+                 lr=3e-4, 
                  warmup_steps=1000, # lr warmup period at start of training and after each resample
-                 sparsity_function='Lp', # Lp or Lp^p
+                 sparsity_function='Lp^p', # Lp or Lp^p
                  initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
                  p_start=1, # starting value of p (constant throughout warmup)
@@ -50,7 +49,7 @@ class PAnnealTrainer(SAETrainer):
                  steps=None, # total number of steps to train for
                  device=None,
                  seed=42,
-                 wandb_name='PAnnealTrainer',
+                 wandb_name='GatedAnnealTrainer',
     ):
         super().__init__(seed)
 
@@ -58,24 +57,27 @@ class PAnnealTrainer(SAETrainer):
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
 
-        if device is None:
-            self.device = t.device('cuda' if t.cuda.is_available() else 'cpu')
-        else:
-            self.device = device
-
+        # initialize dictionary
         # initialize dictionary
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.ae = dict_class(activation_dim, dict_size)
-        self.ae.to(self.device)
         
+        if device is None:
+            self.device = 'cuda' if t.cuda.is_available() else 'cpu'
+        else:
+            self.device = device
+        self.ae.to(self.device)
+                
         self.lr = lr
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
         self.p_start = p_start
         self.p_end = p_end
-        self.p = p_start
-        self.next_p = None
+        self.p = p_start # p is set in self.loss()
+        self.next_p = None # set in self.loss()
+        self.lp_loss = None # set in self.loss()
+        self.scaled_lp_loss = None # set in self.loss()
         self.n_sparsity_updates = n_sparsity_updates
         self.sparsity_update_steps = t.linspace(anneal_start, steps-1, n_sparsity_updates, dtype=int)
         self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
@@ -105,7 +107,7 @@ class PAnnealTrainer(SAETrainer):
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
-
+        
     def resample_neurons(self, deads, activations):
         with t.no_grad():
             if deads.sum() == 0: return
@@ -137,7 +139,7 @@ class PAnnealTrainer(SAETrainer):
             ## decoder weight
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
-
+        
     def lp_norm(self, f, p):
         norm_sq = f.pow(p).sum(dim=-1)
         if self.sparsity_function == 'Lp^p':
@@ -146,18 +148,23 @@ class PAnnealTrainer(SAETrainer):
             return norm_sq.pow(1/p).mean()
         else:
             raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
-    
-    def loss(self, x, step, logging=False):
-        # Compute loss terms
-        x_hat, f = self.ae(x, output_features=True)
-        l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-        lp_loss = self.lp_norm(f, self.p)
+        
+    def loss(self, x, step, logging=False, **kwargs):
+        f, f_gate = self.ae.encode(x)
+        x_hat = self.ae.decode(f)
+        x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
+
+        L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
+        L_aux = (x - x_hat_gate).pow(2).sum(dim=-1).mean()
+
+        fs = f_gate # feature activation that we use for sparsity term
+        lp_loss = self.lp_norm(fs, self.p)
         scaled_lp_loss = lp_loss * self.sparsity_coeff
         self.lp_loss = lp_loss
         self.scaled_lp_loss = scaled_lp_loss
 
         if self.next_p is not None:
-            lp_loss_next = self.lp_norm(f, self.next_p)
+            lp_loss_next = self.lp_norm(fs, self.next_p)
             self.sparsity_queue.append([self.lp_loss.item(), lp_loss_next.item()])
             self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
     
@@ -180,20 +187,26 @@ class PAnnealTrainer(SAETrainer):
             # update steps_since_active
             deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
-            self.steps_since_active[~deads] = 0        
+            self.steps_since_active[~deads] = 0       
+            
+        loss = L_recon + scaled_lp_loss + L_aux
     
-        if logging is False:
-            return l2_loss + scaled_lp_loss
-        else: 
-            loss_log = {
-                'p' : self.p,
-                'next_p' : self.next_p,
-                'lp_loss' : lp_loss.item(),
-                'scaled_lp_loss' : scaled_lp_loss.item(),
-                'sparsity_coeff' : self.sparsity_coeff,
-            }
-            return x, x_hat, f, loss_log
-    
+        if not logging:
+            return loss
+        else:
+            return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
+                x, x_hat, f,
+                {
+                    'mse_loss' : L_recon.item(),
+                    'aux_loss' : L_aux.item(),
+                    'loss' : loss.item(),
+                    'p' : self.p,
+                    'next_p' : self.next_p,
+                    'lp_loss' : lp_loss.item(),
+                    'sparsity_loss' : scaled_lp_loss.item(),
+                    'sparsity_coeff' : self.sparsity_coeff,
+                }
+            )
         
     def update(self, step, activations):
         activations = activations.to(self.device)
@@ -207,11 +220,24 @@ class PAnnealTrainer(SAETrainer):
         if self.resample_steps is not None and step % self.resample_steps == self.resample_steps - 1:
             self.resample_neurons(self.steps_since_active > self.resample_steps / 2, activations)
 
+    # @property
+    # def config(self):
+    #     return {
+    #         'trainer_class' : 'GatedSAETrainer',
+    #         'activation_dim' : self.ae.activation_dim,
+    #         'dict_size' : self.ae.dict_size,
+    #         'lr' : self.lr,
+    #         'l1_penalty' : self.l1_penalty,
+    #         'warmup_steps' : self.warmup_steps,
+    #         'device' : self.device,
+    #         'wandb_name': self.wandb_name,
+    #     }
+        
     @property
     def config(self):
         return {
-            'trainer_class' : "PAnnealTrainer",
-            'dict_class' : "AutoEncoder",
+            'trainer_class' : "GatedAnnealTrainer",
+            'dict_class' : "GatedAutoEncoder",
             'activation_dim' : self.activation_dim,
             'dict_size' : self.dict_size,
             'lr' : self.lr,

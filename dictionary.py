@@ -145,33 +145,27 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
 
-    def encode(self, x, gate_only=False):
+    def encode(self, x):
         """
-        If gate_only is True, instead return ReLU(gating preactivations)
+        Returns features, gate value (pre-Heavyside)
         """
         x_enc = self.encoder(x - self.decoder_bias)
 
-        if not gate_only:
+        # gating network
+        pi_gate = x_enc + self.gate_bias
+        f_gate = (pi_gate > 0).float()
 
-            # gating network
-            pi_gate = x_enc + self.gate_bias
-            f_gate = (pi_gate > 0).float()
+        # magnitude network
+        pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
+        f_mag = nn.ReLU()(pi_mag)
 
-            # magnitude network
-            pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
-            f_mag = nn.ReLU()(pi_mag)
-
-            return f_gate * f_mag
-        else:
-            # only gating network
-            pi_gate = x_enc + self.gate_bias
-            return nn.ReLU()(pi_gate)
+        return f_gate * f_mag, nn.ReLU()(pi_gate)
 
     def decode(self, f):
         return self.decoder(f) + self.decoder_bias
     
-    def forward(self, x, output_features=False, gate_only=False):
-        f = self.encode(x, gate_only=gate_only)
+    def forward(self, x, output_features=False):
+        f, _ = self.encode(x)
         x_hat = self.decode(f)
 
         # TODO: modify so that x_hat depends on f
@@ -189,6 +183,62 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict['encoder.weight'].shape
         autoencoder = GatedAutoEncoder(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+    
+class JumpAutoEncoder(Dictionary, nn.Module):
+    """
+    An autoencoder with jump ReLUs. Replacement for GatedAutoEncoder.
+    """
+    def __init__(self, activation_dim, dict_size):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.bias = nn.Parameter(t.zeros(activation_dim))
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        
+        # jump values added to activated features
+        self.jump = nn.Parameter(t.zeros(dict_size))
+
+        # rows of decoder weight matrix are unit vectors
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+        dec_weight = t.randn_like(self.decoder.weight)
+        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
+        self.decoder.weight = nn.Parameter(dec_weight)
+
+    def encode(self, x, output_pre_jump=False):
+        pre_jump = nn.ReLU()(self.encoder(x - self.bias))
+        f = pre_jump + self.jump * (pre_jump > 0)
+        if output_pre_jump:
+            return f, pre_jump
+        else:
+            return f
+    
+    def decode(self, f):
+        return self.decoder(f) + self.bias
+    
+    def forward(self, x, output_features=False):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
+        """
+        f, pre_jump = self.encode(x, output_pre_jump=True)
+        x_hat = self.decode(f)
+        if output_features:
+            return x_hat, f, pre_jump
+        else:
+            return x_hat
+            
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        autoencoder = JumpAutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
