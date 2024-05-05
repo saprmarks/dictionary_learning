@@ -130,33 +130,27 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
 
-    def encode(self, x, gate_only=False):
+    def encode(self, x):
         """
-        If gate_only is True, instead return ReLU(gating preactivations)
+        Returns features, gate value (pre-Heavyside)
         """
         x_enc = self.encoder(x - self.decoder_bias)
 
-        if not gate_only:
+        # gating network
+        pi_gate = x_enc + self.gate_bias
+        f_gate = (pi_gate > 0).float()
 
-            # gating network
-            pi_gate = x_enc + self.gate_bias
-            f_gate = (pi_gate > 0).float()
+        # magnitude network
+        pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
+        f_mag = nn.ReLU()(pi_mag)
 
-            # magnitude network
-            pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
-            f_mag = nn.ReLU()(pi_mag)
-
-            return f_gate * f_mag
-        else:
-            # only gating network
-            pi_gate = x_enc + self.gate_bias
-            return nn.ReLU()(pi_gate)
+        return f_gate * f_mag, nn.ReLU()(pi_gate)
 
     def decode(self, f):
         return self.decoder(f) + self.decoder_bias
     
-    def forward(self, x, output_features=False, gate_only=False):
-        f = self.encode(x, gate_only=gate_only)
+    def forward(self, x, output_features=False):
+        f, _ = self.encode(x)
         x_hat = self.decode(f)
         if output_features:
             return x_hat, f

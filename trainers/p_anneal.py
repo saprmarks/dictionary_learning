@@ -77,7 +77,7 @@ class PAnnealTrainer(SAETrainer):
         self.p = p_start
         self.next_p = None
         self.n_sparsity_updates = n_sparsity_updates
-        self.sparsity_update_steps = t.linspace(anneal_start, steps, n_sparsity_updates, dtype=int)
+        self.sparsity_update_steps = t.linspace(anneal_start, steps-1, n_sparsity_updates, dtype=int)
         self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
         self.p_step_count = 0
         self.sparsity_coeff = initial_sparsity_penalty # alpha
@@ -153,6 +153,8 @@ class PAnnealTrainer(SAETrainer):
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         lp_loss = self.lp_norm(f, self.p)
         scaled_lp_loss = lp_loss * self.sparsity_coeff
+        self.lp_loss = lp_loss
+        self.scaled_lp_loss = scaled_lp_loss
 
         if self.next_p is not None:
             lp_loss_next = self.lp_norm(f, self.next_p)
@@ -167,8 +169,10 @@ class PAnnealTrainer(SAETrainer):
                 self.sparsity_coeff = self.sparsity_coeff * (local_sparsity_new / local_sparsity_old).item()
             # Update p
             self.p = self.p_values[self.p_step_count].item()
-            if self.p_step_count < self.n_sparsity_updates:
+            if self.p_step_count < self.n_sparsity_updates-1:
                 self.next_p = self.p_values[self.p_step_count+1].item()
+            else:
+                self.next_p = self.p_end
             self.p_step_count += 1
 
         # Update dead feature count
