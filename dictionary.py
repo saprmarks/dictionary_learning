@@ -269,6 +269,10 @@ class AutoEncoderNew(Dictionary, nn.Module):
         self.encoder.weight = nn.Parameter(w.clone().T)
         self.decoder.weight = nn.Parameter(w.clone())
 
+        # initialize biases to zeros
+        init.zeros_(self.encoder.bias)
+        init.zeros_(self.decoder.bias)
+
     def encode(self, x):
         return nn.ReLU()(self.encoder(x))
     
