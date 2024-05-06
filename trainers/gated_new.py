@@ -75,7 +75,7 @@ class GatedTrainerNew(SAETrainer):
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
 
-        f = f * self.ae.decoder.weight.norm(dim=0, keepdim=True)
+        f_gate = f_gate * self.ae.decoder.weight.norm(dim=0, keepdim=True)
 
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
         L_sparse = f_gate.norm(p=1, dim=-1).mean()
@@ -89,7 +89,7 @@ class GatedTrainerNew(SAETrainer):
             return loss
         else:
             return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
-                x, x_hat, f,
+                x, x_hat, f * self.ae.decoder.weight.norm(dim=0, keepdim=True),
                 {
                     'mse_loss' : L_recon.item(),
                     'sparsity_loss' : L_sparse.item(),
