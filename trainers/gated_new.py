@@ -19,7 +19,7 @@ def initialize(ae):
     init.zeros_(ae.mag_bias)
 
     w = t.randn_like(ae.encoder.weight)
-    w = w / w.norm(dim=0, keepdim=True)
+    w = w / w.norm(dim=0, keepdim=True) * 0.1
     ae.encoder.weight = t.nn.Parameter(w)
     ae.decoder.weight = t.nn.Parameter(w.T)
 
@@ -71,10 +71,11 @@ class GatedTrainerNew(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
     def loss(self, x, step=None, logging=False):
-        x_hat = self.ae(x)
-        f_gate = self.ae.encode(x, gate_only=True)
+        f, f_gate = self.ae.encode(x, return_gate=True)
+        x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
-        f_gate = f_gate * self.ae.decoder.weight.norm(dim=0, keepdim=True)
+
+        f = f * self.ae.decoder.weight.norm(dim=0, keepdim=True)
 
         L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
         L_sparse = f_gate.norm(p=1, dim=-1).mean()
@@ -87,8 +88,8 @@ class GatedTrainerNew(SAETrainer):
         if not logging:
             return loss
         else:
-            return namedtuple('LossLog', ['x', 'x_hat', 'f_gate', 'losses'])(
-                x, x_hat, f_gate,
+            return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
+                x, x_hat, f,
                 {
                     'mse_loss' : L_recon.item(),
                     'sparsity_loss' : L_sparse.item(),
