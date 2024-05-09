@@ -42,6 +42,7 @@ class PAnnealTrainer(SAETrainer):
                  sparsity_function='Lp', # Lp or Lp^p
                  initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
                  anneal_start=15000, # step at which to start annealing p
+                 anneal_end=None, # step at which to stop annealing, defaults to steps-1
                  p_start=1, # starting value of p (constant throughout warmup)
                  p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
                  n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
@@ -72,13 +73,17 @@ class PAnnealTrainer(SAETrainer):
         self.lr = lr
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
+        self.anneal_end = anneal_end if anneal_end is not None else steps-1
         self.p_start = p_start
         self.p_end = p_end
         self.p = p_start
         self.next_p = None
-        self.n_sparsity_updates = n_sparsity_updates
-        self.sparsity_update_steps = t.linspace(anneal_start, steps-1, n_sparsity_updates, dtype=int)
-        self.p_values = t.linspace(p_start, p_end, n_sparsity_updates)
+        if n_sparsity_updates == "continuous":
+            self.n_sparsity_updates = self.anneal_end - anneal_start +1
+        else:
+            self.n_sparsity_updates = n_sparsity_updates
+        self.sparsity_update_steps = t.linspace(anneal_start, self.anneal_end, self.n_sparsity_updates, dtype=int)
+        self.p_values = t.linspace(p_start, p_end, self.n_sparsity_updates)
         self.p_step_count = 0
         self.sparsity_coeff = initial_sparsity_penalty # alpha
         self.sparsity_queue_length = sparsity_queue_length
@@ -105,6 +110,9 @@ class PAnnealTrainer(SAETrainer):
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
+        
+        if (self.sparsity_update_steps.unique(return_counts=True)[1] >1).any():
+            print("Warning! Duplicates om self.sparsity_update_steps detected!")
 
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -162,18 +170,20 @@ class PAnnealTrainer(SAETrainer):
             self.sparsity_queue = self.sparsity_queue[-self.sparsity_queue_length:]
     
         if step in self.sparsity_update_steps:
-            # Adapt sparsity penalty alpha
-            if self.next_p is not None:
-                local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
-                local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
-                self.sparsity_coeff = self.sparsity_coeff * (local_sparsity_new / local_sparsity_old).item()
-            # Update p
-            self.p = self.p_values[self.p_step_count].item()
-            if self.p_step_count < self.n_sparsity_updates-1:
-                self.next_p = self.p_values[self.p_step_count+1].item()
-            else:
-                self.next_p = self.p_end
-            self.p_step_count += 1
+            # check to make sure we don't update on repeat step:
+            if step >= self.sparsity_update_steps[self.p_step_count]:
+                # Adapt sparsity penalty alpha
+                if self.next_p is not None:
+                    local_sparsity_new = t.tensor([i[0] for i in self.sparsity_queue]).mean()
+                    local_sparsity_old = t.tensor([i[1] for i in self.sparsity_queue]).mean()
+                    self.sparsity_coeff = self.sparsity_coeff * (local_sparsity_new / local_sparsity_old).item()
+                # Update p
+                self.p = self.p_values[self.p_step_count].item()
+                if self.p_step_count < self.n_sparsity_updates-1:
+                    self.next_p = self.p_values[self.p_step_count+1].item()
+                else:
+                    self.next_p = self.p_end
+                self.p_step_count += 1
 
         # Update dead feature count
         if self.steps_since_active is not None:
