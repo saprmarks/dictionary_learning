@@ -14,6 +14,7 @@ def loss_recovered(
     submodule,  # submodules of model
     dictionary,  # dictionaries for submodules
     max_len=None,  # max context length for loss recovered
+    normalize_batch=False,  # normalize batch before passing through dictionary
     io="out",  # can be 'in', 'out', or 'in_to_out'
 ):
     """
@@ -35,16 +36,28 @@ def loss_recovered(
     with model.trace(text, invoker_args=invoker_args):
         if io == 'in':
             x = submodule.input[0]
-            if isinstance(x, tuple):
-                submodule.input[0][:] = dictionary(x[0])
+            if type(x.shape) == tuple: x = x[0]
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x = x * scale
+            x_hat = dictionary(x)
+            if normalize_batch: x_hat = x_hat / scale
+            if type(x.shape) == tuple:
+                submodule.input[0][:] = x_hat
             else:
-                submodule.input = dictionary(x)
+                submodule.input = x_hat
         elif io == 'out':
             x = submodule.output
-            if isinstance(x, tuple):
-                submodule.output[0][:] = dictionary(x[0])
+            if type(x.shape) == tuple: x = x[0]
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x = x * scale
+            x_hat = dictionary(x)
+            if normalize_batch: x_hat = x_hat / scale
+            if type(x.shape) == tuple:
+                submodule.output[0][:] = x_hat
             else:
-                submodule.output = dictionary(x)
+                submodule.output = x_hat
         
         logits_reconstructed = model.output.save()
     logits_reconstructed = logits_reconstructed.value
@@ -98,6 +111,7 @@ def evaluate(
     max_len=128,  # max context length for loss recovered
     batch_size=128,  # batch size for loss recovered
     io="out",  # can be 'in', 'out', or 'in_to_out'
+    normalize_batch=False, # normalize batch before passing through dictionary
     device="cpu",
 ):
     with t.no_grad():
@@ -106,6 +120,9 @@ def evaluate(
 
         try:
             x = next(activations).to(device)
+            if normalize_batch:
+                x = x / x.norm(dim=-1).mean() * (dictionary.activation_dim ** 0.5)
+
         except StopIteration:
             raise StopIteration(
                 "Not enough activations in buffer. Pass a buffer with a smaller batch size or more data."
@@ -148,6 +165,7 @@ def evaluate(
             activations.submodule,
             dictionary,
             max_len=max_len,
+            normalize_batch=normalize_batch,
             io=io,
         )
         frac_recovered = (loss_reconstructed - loss_zero) / (loss_original - loss_zero)
