@@ -20,8 +20,8 @@ def initialize(ae):
 
     w = t.randn_like(ae.encoder.weight)
     w = w / w.norm(dim=0, keepdim=True) * 0.1
-    ae.encoder.weight = t.nn.Parameter(w)
-    ae.decoder.weight = t.nn.Parameter(w.T)
+    ae.encoder.weight = t.nn.Parameter(w.clone())
+    ae.decoder.weight = t.nn.Parameter(w.clone().T)
 
 
 class GatedTrainerNew(SAETrainer):
@@ -32,7 +32,7 @@ class GatedTrainerNew(SAETrainer):
                  dict_class=GatedAutoEncoder,
                  activation_dim=512,
                  dict_size=64*512,
-                 lr=5e-4, 
+                 lr=5e-5, 
                  l1_penalty=1e-1,
                  lambda_warm_steps=1500, # steps over which to warm up the l1 penalty
                  decay_start=24000, # when does the lr decay start
@@ -71,6 +71,9 @@ class GatedTrainerNew(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
     def loss(self, x, step=None, logging=False):
+        if logging:
+            x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+
         f, f_gate = self.ae.encode(x, return_gate=True)
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
@@ -85,11 +88,12 @@ class GatedTrainerNew(SAETrainer):
         l1_penalty = min(1., step / self.lambda_warm_steps) * self.l1_penalty
 
         loss = L_recon + l1_penalty * L_sparse + L_aux
+        
         if not logging:
             return loss
         else:
             return namedtuple('LossLog', ['x', 'x_hat', 'f', 'losses'])(
-                x, x_hat, f * self.ae.decoder.weight.norm(dim=0, keepdim=True),
+                x, x_hat, f,
                 {
                     'mse_loss' : L_recon.item(),
                     'sparsity_loss' : L_sparse.item(),
@@ -103,8 +107,7 @@ class GatedTrainerNew(SAETrainer):
     def update(self, step, x):
         x = x.to(self.device)
         
-        # normalization was removed
-        # x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+        x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
 
         self.optimizer.zero_grad()
         loss = self.loss(x, step=step)
