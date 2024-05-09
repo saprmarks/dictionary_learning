@@ -36,7 +36,7 @@ class GatedSAETrainer(SAETrainer):
                  dict_class=GatedAutoEncoder,
                  activation_dim=512,
                  dict_size=64*512,
-                 lr=3e-4, 
+                 lr=5e-5, 
                  l1_penalty=1e-1,
                  warmup_steps=1000, # lr warmup period at start of training and after each resample
                  resample_steps=None, # how often to resample neurons

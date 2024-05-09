@@ -15,7 +15,7 @@ class StandardTrainerNew(SAETrainer):
                  dict_class=AutoEncoderNew,
                  activation_dim=512,
                  dict_size=64*512,
-                 lr=5e-4, 
+                 lr=5e-5, 
                  l1_penalty=1e-1,
                  lambda_warm_steps=1500, # steps over which to warm up the l1 penalty
                  decay_start=24000, # when does the lr decay start
@@ -55,6 +55,9 @@ class StandardTrainerNew(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
     def loss(self, x, step=None, logging=False):
+        if logging:
+            x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+
         x_hat, f = self.ae(x, output_features=True)
 
         l1_penalty = self.l1_penalty
@@ -82,8 +85,8 @@ class StandardTrainerNew(SAETrainer):
     def update(self, step, x):
         x = x.to(self.device)
         
-        # normalization was removed
-        # x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+        # normalization 
+        x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
 
         self.optimizer.zero_grad()
         loss = self.loss(x, step=step)
