@@ -79,7 +79,12 @@ def trainSAE(
         if log_steps is not None and step % log_steps == 0:
             log = {}
             with t.no_grad():
+
+                # quick hack to make sure all trainers get the same x
+                # TODO make this less hacky
+                y = x.clone()
                 for i, trainer in enumerate(trainers):
+                    x = y.clone()
                     trainer_name = f'{trainer.config["wandb_name"]}-{i}'
                     x, x_hat, f, losslog = trainer.loss(x, step=step, logging=True)
                     log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
