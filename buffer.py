@@ -222,28 +222,28 @@ class HeadActivationBuffer:
         while len(self.activations) < self.n_ctxs * self.ctx_len:
             with t.no_grad():
                 with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}, remote=self.remote):
-                    hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.input[0][0].save()
                     input = self.model.input.save()
+                    hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.input[0][0]#.save()
+                    if isinstance(hidden_states, tuple):
+                        hidden_states = hidden_states[0]
+
+                    # Reshape by head
+                    new_shape = hidden_states.size()[:-1] + (self.n_heads, self.head_dim) # (batch_size, seq_len, n_heads, head_dim)
+                    hidden_states = hidden_states.view(*new_shape)
+
+                    # Optionally map from head dim to resid dim
+                    if self.apply_W_O:
+                        hidden_states_W_O_shape = hidden_states.size()[:-1] + (self.model.config.hidden_size,) # (batch_size, seq_len, n_heads, resid_dim)
+                        hidden_states_W_O = t.zeros(hidden_states_W_O_shape, device=hidden_states.device)
+                        for h in range (self.n_heads):
+                            start = h*self.head_dim
+                            end = (h+1)*self.head_dim
+                            hidden_states_W_O[..., h, start:end] = hidden_states[..., h, :]
+                        hidden_states = self.model.model.layers[self.layer].self_attn.o_proj(hidden_states_W_O).save()
+
+            # Apply attention mask
             attn_mask = input.value[1]['attention_mask']
-
-            # Unpack and apply attention mask
-            if isinstance(hidden_states, tuple):
-                hidden_states = hidden_states[0]
             hidden_states = hidden_states[attn_mask != 0]
-
-            # Reshape by head
-            new_shape = hidden_states.size()[:-1] + (self.n_heads, self.head_dim) # (batch_size, seq_len, n_heads, head_dim)
-            hidden_states = hidden_states.view(*new_shape)
-
-            # Optionally map from head dim to resid dim
-            if self.apply_W_O:
-                hidden_states_W_O_shape = hidden_states.size()[:-1] + (self.model.config.hidden_size) # (batch_size, seq_len, n_heads, resid_dim)
-                hidden_states_W_O = t.zeros(hidden_states_W_O_shape, device=hidden_states.device)
-                for h in range (self.n_heads):
-                    start = h*self.head_dim
-                    end = (h+1)*self.head_dim
-                    hidden_states_W_O[..., h, start:end] = hidden_states[..., h, :]
-                hidden_states = self.model.model.layers[self.layer].self_attn.o_proj(hidden_states_W_O)
 
             # Save results
             self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
