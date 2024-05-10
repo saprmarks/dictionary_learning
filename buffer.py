@@ -152,6 +152,7 @@ class HeadActivationBuffer:
                  out_batch_size=8192, # size of batches in which to yield activations
                  device='cpu', # device on which to store the activations
                  apply_W_O = False,
+                 remote = False,
                  ):
         
         self.layer = layer
@@ -166,6 +167,7 @@ class HeadActivationBuffer:
         self.out_batch_size = out_batch_size
         self.device = device
         self.apply_W_O = apply_W_O
+        self.remote = remote
 
         self.activations = t.empty(0, self.n_heads, self.head_dim, device=device) # [seq-pos, n_layers, n_head, head_dim]
         self.read = t.zeros(0).bool()
@@ -219,7 +221,7 @@ class HeadActivationBuffer:
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
             with t.no_grad():
-                with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}):
+                with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}, remote=self.remote):
                     hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.input[0][0].save()
                     input = self.model.input.save()
             attn_mask = input.value[1]['attention_mask']
