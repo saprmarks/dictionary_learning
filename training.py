@@ -31,6 +31,7 @@ def trainSAE(
         save_steps=None,
         save_dir=None, # use {run} to refer to wandb run
         log_steps=None,
+        activations_split_by_head=False, # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
 ):
     """
     Train SAEs using the given trainers
@@ -85,6 +86,8 @@ def trainSAE(
                 y = x.clone()
                 for i, trainer in enumerate(trainers):
                     x = y.clone()
+                    if activations_split_by_head: # x.shape: [batch, pos, n_heads, d_head]
+                        x = x[..., i, :] 
                     trainer_name = f'{trainer.config["wandb_name"]}-{i}'
                     x, x_hat, f, losslog = trainer.loss(x, step=step, logging=True)
                     log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})

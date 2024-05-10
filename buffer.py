@@ -133,3 +133,133 @@ class ActivationBuffer:
         Close the text stream and the underlying compressed file.
         """
         self.text_stream.close()
+
+
+class HeadActivationBuffer:
+    """
+    This is specifically designed for training SAEs for individual attn heads in Llama3. 
+    Much redundant code; can eventually be merged to ActivationBuffer.
+    Implements a buffer of activations. The buffer stores activations from a model,
+    yields them in batches, and refreshes them when the buffer is less than half full.
+    """
+    def __init__(self, 
+                 data, # generator which yields text data
+                 model : LanguageModel, # LanguageModel from which to extract activations
+                 layer, # submodule of the model from which to extract activations
+                 n_ctxs=3e4, # approximate number of contexts to store in the buffer
+                 ctx_len=128, # length of each context
+                 refresh_batch_size=512, # size of batches in which to process the data when adding to buffer
+                 out_batch_size=8192, # size of batches in which to yield activations
+                 device='cpu', # device on which to store the activations
+                 apply_W_O = False,
+                 ):
+        
+        self.layer = layer
+        self.n_heads = model.config.num_attention_heads
+        self.resid_dim = model.config.hidden_size 
+        self.head_dim = self.resid_dim //self.n_heads
+        self.data = data
+        self.model = model
+        self.n_ctxs = n_ctxs
+        self.ctx_len = ctx_len
+        self.refresh_batch_size = refresh_batch_size
+        self.out_batch_size = out_batch_size
+        self.device = device
+        self.apply_W_O = apply_W_O
+
+        self.activations = t.empty(0, self.n_heads, self.head_dim, device=device) # [seq-pos, n_layers, n_head, head_dim]
+        self.read = t.zeros(0).bool()
+    
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        """
+        Return a batch of activations
+        """
+        with t.no_grad():
+            # if buffer is less than half full, refresh
+            if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
+                self.refresh()
+
+            # return a batch
+            unreads = (~self.read).nonzero().squeeze()
+            idxs = unreads[t.randperm(len(unreads), device=unreads.device)[:self.out_batch_size]]
+            self.read[idxs] = True
+            return self.activations[idxs]
+    
+    def text_batch(self, batch_size=None):
+        """
+        Return a list of text
+        """
+        if batch_size is None:
+            batch_size = self.refresh_batch_size
+        try:
+            return [
+                next(self.data) for _ in range(batch_size)
+            ]
+        except StopIteration:
+            raise StopIteration("End of data stream reached")
+    
+    def tokenized_batch(self, batch_size=None):
+        """
+        Return a batch of tokenized inputs.
+        """
+        texts = self.text_batch(batch_size=batch_size)
+        return self.model.tokenizer(
+            texts,
+            return_tensors='pt',
+            max_length=self.ctx_len,
+            padding=True,
+            truncation=True
+        )
+
+    def refresh(self):
+        self.activations = self.activations[~self.read]
+
+        while len(self.activations) < self.n_ctxs * self.ctx_len:
+            with t.no_grad():
+                with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}):
+                    hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.input[0][0].save()
+                    input = self.model.input.save()
+            attn_mask = input.value[1]['attention_mask']
+
+            # Unpack and apply attention mask
+            if isinstance(hidden_states, tuple):
+                hidden_states = hidden_states[0]
+            hidden_states = hidden_states[attn_mask != 0]
+
+            # Reshape by head
+            new_shape = hidden_states.size()[:-1] + (self.n_heads, self.head_dim) # (batch_size, seq_len, n_heads, head_dim)
+            hidden_states = hidden_states.view(*new_shape)
+
+            # Optionally map from head dim to resid dim
+            if self.apply_W_O:
+                hidden_states_W_O_shape = hidden_states.size()[:-1] + (self.model.config.hidden_size) # (batch_size, seq_len, n_heads, resid_dim)
+                hidden_states_W_O = t.zeros(hidden_states_W_O_shape, device=hidden_states.device)
+                for h in range (self.n_heads):
+                    start = h*self.head_dim
+                    end = (h+1)*self.head_dim
+                    hidden_states_W_O[..., h, start:end] = hidden_states[..., h, :]
+                hidden_states = self.model.model.layers[self.layer].self_attn.o_proj(hidden_states_W_O)
+
+            # Save results
+            self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
+            self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+
+    @property
+    def config(self):
+        return {
+            'layer': self.layer,
+            'n_ctxs' : self.n_ctxs,
+            'ctx_len' : self.ctx_len,
+            'refresh_batch_size' : self.refresh_batch_size,
+            'out_batch_size' : self.out_batch_size,
+            'device' : self.device
+        }
+
+    def close(self):
+        """
+        Close the text stream and the underlying compressed file.
+        """
+        self.text_stream.close()
