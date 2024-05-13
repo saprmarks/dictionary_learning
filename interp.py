@@ -7,12 +7,15 @@ import umap
 import pandas as pd
 import plotly.express as px
 
+TRACER_KWARGS = {"scan" : False, "validate" : False}
+
 def feature_effect(
         model,
         submodule,
         dictionary,
         feature,
         inputs,
+        max_length=128,
         add_residual=True, # whether to compensate for dictionary reconstruction error by adding residual
         k=10,
         largest=True,
@@ -20,57 +23,56 @@ def feature_effect(
     """
     Effect of ablating the feature on top k predictions for next token.
     """
-    with t.no_grad():
-        # clean run
-        with model.trace(inputs):
-            if dictionary is None:
-                pass
-            elif not add_residual: # run hidden state through autoencoder
-                if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = dictionary(submodule.output[0])
-                else:
-                    submodule.output = dictionary(submodule.output)
-            clean_output = model.output.save()
-        try:
-            clean_logits = clean_output.value.logits[:, -1, :]
-        except:
-            clean_logits = clean_output.value[:, -1, :]
-        clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
-
-        # ablated run
-        with model.trace(inputs):
-            if dictionary is None:
-                if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:, -1, feature] = 0
-                else:
-                    submodule.output[:, -1, feature] = 0
+    # clean run
+    with t.no_grad(), model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
+        if dictionary is None:
+            pass
+        elif not add_residual: # run hidden state through autoencoder
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][:] = dictionary(submodule.output[0])
             else:
-                x = submodule.output
-                if type(x.shape) == tuple:
-                    x = x[0]
-                x_hat, f = dictionary(x, output_features=True)
-                residual = x - x_hat
-                
-                f[:, -1, feature] = 0
-                if add_residual:
-                    x_hat = dictionary.decode(f) + residual
-                else:
-                    x_hat = dictionary.decode(f)
-                
-                if type(submodule.output.shape) == tuple:
-                    submodule.output[0][:] = x_hat
-                else:
-                    submodule.output = x_hat
-            ablated_output = model.output.save()
-        try:
-            ablated_logits = ablated_output.value.logits[:, -1, :]
-        except:
-            ablated_logits = ablated_output.value[:, -1, :]
-        ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
+                submodule.output = dictionary(submodule.output)
+        clean_output = model.output.save()
+    try:
+        clean_logits = clean_output.value.logits[:, -1, :]
+    except:
+        clean_logits = clean_output.value[:, -1, :]
+    clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
-        diff = clean_logprobs - ablated_logprobs
-        top_probs, top_tokens = t.topk(diff.mean(dim=0), k=k, largest=largest)
-        return top_tokens, top_probs
+    # ablated run
+    with t.no_grad(), model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
+        if dictionary is None:
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][:, -1, feature] = 0
+            else:
+                submodule.output[:, -1, feature] = 0
+        else:
+            x = submodule.output
+            if type(x.shape) == tuple:
+                x = x[0]
+            x_hat, f = dictionary(x, output_features=True)
+            residual = x - x_hat
+            
+            f[:, -1, feature] = 0
+            if add_residual:
+                x_hat = dictionary.decode(f) + residual
+            else:
+                x_hat = dictionary.decode(f)
+            
+            if type(submodule.output.shape) == tuple:
+                submodule.output[0][:] = x_hat
+            else:
+                submodule.output = x_hat
+        ablated_output = model.output.save()
+    try:
+        ablated_logits = ablated_output.value.logits[:, -1, :]
+    except:
+        ablated_logits = ablated_output.value[:, -1, :]
+    ablated_logprobs = t.nn.functional.log_softmax(ablated_logits, dim=-1)
+
+    diff = clean_logprobs - ablated_logprobs
+    top_probs, top_tokens = t.topk(diff.mean(dim=0), k=k, largest=largest)
+    return top_tokens, top_probs
 
 
 def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128, n_inputs=512,
@@ -127,6 +129,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         dictionary,
         dim_idx,
         tokens,
+        max_length=max_length,
         k=k
     )
     top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]
