@@ -3,7 +3,7 @@ Utilities for evaluating dictionaries on a model and dataset.
 """
 
 import torch as t
-from .buffer import ActivationBuffer
+from .buffer import ActivationBuffer, NNsightActivationBuffer
 from nnsight import LanguageModel
 from .config import DEBUG
 
@@ -155,7 +155,7 @@ def evaluate(
         out["cossim"] = cossim.item()
         out["l2_ratio"] = l2_ratio.item()
 
-        if not isinstance(activations, ActivationBuffer):
+        if not isinstance(activations, (ActivationBuffer, NNsightActivationBuffer)):
             return out
 
         # compute loss recovered
