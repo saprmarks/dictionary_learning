@@ -55,8 +55,9 @@ class StandardTrainerNew(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
     
     def loss(self, x, step=None, logging=False):
-        if logging:
-            x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+        # NOTE: not using normalization
+        # if logging:
+        #     x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
 
         x_hat, f = self.ae(x, output_features=True)
 
@@ -85,8 +86,9 @@ class StandardTrainerNew(SAETrainer):
     def update(self, step, x):
         x = x.to(self.device)
         
+        # NOTE: not using normalization
         # normalization 
-        x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
+        # x = x / x.norm(dim=-1).mean() * (self.ae.activation_dim ** 0.5)
 
         self.optimizer.zero_grad()
         loss = self.loss(x, step=step)
