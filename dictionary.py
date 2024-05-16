@@ -224,7 +224,7 @@ class JumpAutoEncoder(Dictionary, nn.Module):
     def decode(self, f):
         return self.decoder(f) + self.bias
     
-    def forward(self, x, output_features=False):
+    def forward(self, x, output_features=False, output_pre_jump=False):
         """
         Forward pass of an autoencoder.
         x : activations to be autoencoded
@@ -232,8 +232,10 @@ class JumpAutoEncoder(Dictionary, nn.Module):
         """
         f, pre_jump = self.encode(x, output_pre_jump=True)
         x_hat = self.decode(f)
-        if output_features:
+        if output_pre_jump:
             return x_hat, f, pre_jump
+        elif output_features:
+            return x_hat, f
         else:
             return x_hat
             
