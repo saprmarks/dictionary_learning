@@ -22,10 +22,12 @@ def loss_recovered(
     with the reconstruction by the autoencoder?
     """
 
+    tracer_args = {'use_cache': False, 'output_attentions': False}
+
     if max_len is None:
         invoker_args = {}
     else:
-        invoker_args = {"truncation": True, "max_length": max_len}
+        invoker_args = {"truncation": True, "max_length": max_len }
 
     # unmodified logits
     with model.trace(text, invoker_args=invoker_args):
@@ -33,46 +35,47 @@ def loss_recovered(
     logits_original = logits_original.value
 
     # logits when replacing component activations with reconstruction by autoencoder
-    with model.trace(text, invoker_args=invoker_args):
+    with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
             x = submodule.input[0]
-            if type(x.shape) == tuple: x = x[0]
+            if type(submodule.input.shape) == tuple: x = x[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
             x_hat = dictionary(x)
             if normalize_batch: x_hat = x_hat / scale
-            if type(x.shape) == tuple:
+            if type(submodule.input.shape) == tuple:
                 submodule.input[0][:] = x_hat
             else:
                 submodule.input = x_hat
         elif io == 'out':
             x = submodule.output
-            if type(x.shape) == tuple: x = x[0]
+            if type(submodule.output.shape) == tuple: x = x[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
             x_hat = dictionary(x)
             if normalize_batch: x_hat = x_hat / scale
-            if type(x.shape) == tuple:
-                submodule.output[0][:] = x_hat
+
+            if type(submodule.output.shape) == tuple:
+                submodule.output = (x_hat,)
             else:
                 submodule.output = x_hat
-        
+
         logits_reconstructed = model.output.save()
     logits_reconstructed = logits_reconstructed.value
 
     # logits when replacing component activations with zeros
-    with model.trace(text, invoker_args=invoker_args):
+    with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
             x = submodule.input[0]
-            if isinstance(x, tuple):
+            if type(submodule.input.shape) == tuple:
                 submodule.input[0][:] = t.zeros_like(x[0])
             else:
                 submodule.input = t.zeros_like(x)
         elif io == 'out':
             x = submodule.output
-            if isinstance(x, tuple):
+            if type(submodule.output.shape) == tuple:
                 submodule.output[0][:] = t.zeros_like(x[0])
             else:
                 submodule.output = t.zeros_like(x)
@@ -89,15 +92,22 @@ def loss_recovered(
     except:
         pass
 
-    try:
-        tokens = input[1]['input_ids']
-    except:
-        tokens = input[1]['input']
+    if isinstance(text, t.Tensor):
+        tokens = text
+    else:
+        try:
+            tokens = input[1]['input_ids']
+        except:
+            tokens = input[1]['input']
 
     # compute losses
     losses = []
+    if hasattr(model, 'tokenizer') and model.tokenizer is not None:
+        loss_kwargs = {'ignore_index': model.tokenizer.pad_token_id}
+    else:
+        loss_kwargs = {}
     for logits in [logits_original, logits_reconstructed, logits_zero]:
-        loss = t.nn.CrossEntropyLoss(ignore_index=model.tokenizer.pad_token_id)(
+        loss = t.nn.CrossEntropyLoss(**loss_kwargs)(
             logits[:, :-1, :].reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1)
         )
         losses.append(loss)
