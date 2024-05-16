@@ -120,7 +120,7 @@ class JumpSAETrainer(SAETrainer):
     def loss(self, x, logging=False, **kwargs):
         x_hat, f, pre_jump = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
-        l1_loss = pre_jump.norm(p=1, dim=-1).mean()
+        l1_loss = f.norm(p=1, dim=-1).mean()
 
         if self.steps_since_active is not None:
             # update steps_since_active
@@ -159,7 +159,7 @@ class JumpSAETrainer(SAETrainer):
     @property
     def config(self):
         return {
-            'trainer_class' : 'StandardTrainer',
+            'trainer_class' : 'JumpSAETrainer',
             'lr' : self.lr,
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
