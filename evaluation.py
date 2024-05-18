@@ -16,13 +16,12 @@ def loss_recovered(
     max_len=None,  # max context length for loss recovered
     normalize_batch=False,  # normalize batch before passing through dictionary
     io="out",  # can be 'in', 'out', or 'in_to_out'
+    tracer_args = {'use_cache': False, 'output_attentions': False}, # minimize cache during model trace.
 ):
     """
     How much of the model's loss is recovered by replacing the component output
     with the reconstruction by the autoencoder?
     """
-
-    tracer_args = {'use_cache': False, 'output_attentions': False}
 
     if max_len is None:
         invoker_args = {}
@@ -122,6 +121,7 @@ def evaluate(
     batch_size=128,  # batch size for loss recovered
     io="out",  # can be 'in', 'out', or 'in_to_out'
     normalize_batch=False, # normalize batch before passing through dictionary
+    tracer_args={'use_cache': False, 'output_attentions': False}, # minimize cache during model trace.
     device="cpu",
 ):
     with t.no_grad():
@@ -177,6 +177,7 @@ def evaluate(
             max_len=max_len,
             normalize_batch=normalize_batch,
             io=io,
+            tracer_args=tracer_args
         )
         frac_recovered = (loss_reconstructed - loss_zero) / (loss_original - loss_zero)
         
