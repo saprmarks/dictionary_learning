@@ -42,9 +42,15 @@ class GatedSAETrainer(SAETrainer):
                  resample_steps=None, # how often to resample neurons
                  seed=None,
                  device=None,
+                 layer=None,
+                 lm_name=None,
                  wandb_name='GatedSAETrainer',
     ):
         super().__init__(seed)
+
+        assert layer is not None and lm_name is not None
+        self.layer = layer
+        self.lm_name = lm_name
 
         if seed is not None:
             t.manual_seed(seed)
@@ -115,5 +121,7 @@ class GatedSAETrainer(SAETrainer):
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
             'device' : self.device,
+            'layer' : self.layer,
+            'lm_name' : self.lm_name,
             'wandb_name': self.wandb_name,
         }

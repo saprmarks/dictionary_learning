@@ -41,9 +41,15 @@ class StandardTrainer(SAETrainer):
                  resample_steps=None, # how often to resample neurons
                  seed=None,
                  device=None,
+                 layer=None,
+                 lm_name=None,
                  wandb_name='StandardTrainer',
     ):
         super().__init__(seed)
+
+        assert layer is not None and lm_name is not None
+        self.layer = layer
+        self.lm_name = lm_name
 
         if seed is not None:
             t.manual_seed(seed)
@@ -164,5 +170,7 @@ class StandardTrainer(SAETrainer):
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'device' : self.device,
+            'layer' : self.layer,
+            'lm_name' : self.lm_name,
             'wandb_name': self.wandb_name,
         }

@@ -51,9 +51,15 @@ class PAnnealTrainer(SAETrainer):
                  steps=None, # total number of steps to train for
                  device=None,
                  seed=42,
+                 layer=None,
+                 lm_name=None,
                  wandb_name='PAnnealTrainer',
     ):
         super().__init__(seed)
+
+        assert layer is not None and lm_name is not None
+        self.layer = layer
+        self.lm_name = lm_name
 
         if seed is not None:
             t.manual_seed(seed)
@@ -236,5 +242,7 @@ class PAnnealTrainer(SAETrainer):
             'resample_steps' : self.resample_steps,
             'steps' : self.steps,
             'seed' : self.seed,
+            'layer' : self.layer,
+            'lm_name' : self.lm_name,
             'wandb_name' : self.wandb_name,
         }
