@@ -79,7 +79,7 @@ class GatedAnnealTrainer(SAETrainer):
         self.lr = lr
         self.sparsity_function = sparsity_function
         self.anneal_start = anneal_start
-        self.anneal_end = anneal_end if anneal_end is not None else steps-1
+        self.anneal_end = anneal_end if anneal_end is not None else steps
         self.p_start = p_start
         self.p_end = p_end
         self.p = p_start # p is set in self.loss()
