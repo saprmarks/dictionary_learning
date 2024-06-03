@@ -136,3 +136,7 @@ def trainSAE(
     for save_dir, trainer in zip(save_dirs, trainers):
         if save_dir is not None:
             t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
+
+    # End the wandb run
+    if log_steps is not None:
+        wandb.finish()
