@@ -279,7 +279,7 @@ class NNsightActivationBuffer:
         model: LanguageModel,  # LanguageModel from which to extract activations
         submodule,  # submodule of the model from which to extract activations
         d_submodule=None,  # submodule dimension; if None, try to detect automatically
-        io="out",  # can be 'in' or 'out'; whether to extract input or output activations
+        io="out",  # can be 'in' or 'out'; whether to extract input or output activations, "in_and_out" for transcoders
         n_ctxs=3e4,  # approximate number of contexts to store in the buffer
         ctx_len=128,  # length of each context
         refresh_batch_size=512,  # size of batches in which to process the data when adding to buffer
@@ -287,8 +287,8 @@ class NNsightActivationBuffer:
         device="cpu",  # device on which to store the activations
     ):
 
-        if io not in ["in", "out"]:
-            raise ValueError("io must be either 'in' or 'out'")
+        if io not in ["in", "out", "in_and_out"]:
+            raise ValueError("io must be either 'in' or 'out' or 'in_and_out'")
 
         if d_submodule is None:
             try:
@@ -298,7 +298,11 @@ class NNsightActivationBuffer:
                     d_submodule = submodule.out_features
             except:
                 raise ValueError("d_submodule cannot be inferred and must be specified directly")
-        self.activations = t.empty(0, d_submodule, device=device)
+        
+        if io in ["in", "out"]:
+            self.activations = t.empty(0, d_submodule, device=device)
+        elif io == "in_and_out":
+            self.activations = t.empty(0, 2, d_submodule, device=device)
 
         self.read = t.zeros(0).bool()
 
@@ -364,26 +368,37 @@ class NNsightActivationBuffer:
         #     raise StopIteration("End of data stream reached")
         return self.token_batch(batch_size)
 
+    def _reshaped_activations(self, hidden_states):
+        hidden_states = hidden_states.value
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        batch_size, seq_len, d_model = hidden_states.shape
+        hidden_states = hidden_states.view(batch_size * seq_len, d_model)
+        return hidden_states
+
     def refresh(self):
         self.activations = self.activations[~self.read]
 
         while len(self.activations) < self.n_ctxs * self.ctx_len:
 
-            with t.no_grad():
-                with self.model.trace(
-                    self.token_batch(),
-                    **tracer_kwargs,
-                    invoker_args={"truncation": True, "max_length": self.ctx_len},
-                ):
-                    if self.io == "in":
-                        hidden_states = self.submodule.input[0].save()
-                    else:
-                        hidden_states = self.submodule.output.save()
-            hidden_states = hidden_states.value
-            if isinstance(hidden_states, tuple):
-                hidden_states = hidden_states[0]
-            batch_size, seq_len, d_model = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size * seq_len, d_model)
+            with t.no_grad(), self.model.trace(
+                self.token_batch(),
+                **tracer_kwargs,
+                invoker_args={"truncation": True, "max_length": self.ctx_len},
+            ):
+                if self.io in ["in", "in_and_out"]:
+                    hidden_states_in = self.submodule.input[0].save()
+                if self.io in ["out", "in_and_out"]:
+                    hidden_states_out = self.submodule.output.save()
+
+            if self.io == "in":
+                hidden_states = self._reshaped_activations(hidden_states_in)
+            elif self.io == "out":
+                hidden_states = self._reshaped_activations(hidden_states_out)
+            elif self.io == "in_and_out":
+                hidden_states_in = self._reshaped_activations(hidden_states_in).unsqueeze(1)
+                hidden_states_out = self._reshaped_activations(hidden_states_out).unsqueeze(1)
+                hidden_states = t.cat([hidden_states_in, hidden_states_out], dim=1)
             self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
             self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
 

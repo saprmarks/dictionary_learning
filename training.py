@@ -32,6 +32,7 @@ def trainSAE(
         save_dir=None, # use {run} to refer to wandb run
         log_steps=None,
         activations_split_by_head=False, # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
+        transcoder=False,
 ):
     """
     Train SAEs using the given trainers
@@ -72,10 +73,10 @@ def trainSAE(
     else:
         save_dirs = [None for _ in trainer_configs]
     
-    for step, x in enumerate(tqdm(data, total=steps)):
+    for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
-        
+
         # logging
         if log_steps is not None and step % log_steps == 0:
             log = {}
@@ -83,25 +84,38 @@ def trainSAE(
 
                 # quick hack to make sure all trainers get the same x
                 # TODO make this less hacky
-                y = x.clone()
+                z = act.clone()
                 for i, trainer in enumerate(trainers):
-                    x = y.clone()
+                    act = z.clone()
                     if activations_split_by_head: # x.shape: [batch, pos, n_heads, d_head]
-                        x = x[..., i, :] 
+                        act = act[..., i, :] 
                     trainer_name = f'{trainer.config["wandb_name"]}-{i}'
-                    x, x_hat, f, losslog = trainer.loss(x, step=step, logging=True)
-                    log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
+                    if not transcoder:
+                        act, act_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x
 
-                    # L0
-                    log[f'{trainer_name}/l0'] = (f != 0).float().sum(dim=-1).mean().item()
+                        # L0
+                        l0 = (f != 0).float().sum(dim=-1).mean().item()
+                        # fraction of variance explained
+                        total_variance = t.var(act, dim=0).sum()
+                        residual_variance = t.var(act - act_hat, dim=0).sum()
+                        frac_variance_explained = (1 - residual_variance / total_variance)
+                        log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
+                    else: # transcoder
+                        x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x, y
 
-                    # fraction of variance explained
-                    total_variance = t.var(x, dim=0).sum()
-                    residual_variance = t.var(x - x_hat, dim=0).sum()
-                    frac_variance_explained = (1 - residual_variance / total_variance)
-                    log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
+                        # L0
+                        l0 = (f != 0).float().sum(dim=-1).mean().item()
+
+                        # fraction of variance explained
+                        # TODO: adapt for transcoder
+                        # total_variance = t.var(x, dim=0).sum()
+                        # residual_variance = t.var(x - x_hat, dim=0).sum()
+                        # frac_variance_explained = (1 - residual_variance / total_variance)
+                        # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
                     # log parameters from training 
+                    log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
+                    log[f'{trainer_name}/l0'] = l0
                     trainer_log = trainer.get_logging_parameters()
                     for name, value in trainer_log.items():
                         log[f'{trainer_name}/{name}'] = value
@@ -130,7 +144,7 @@ def trainSAE(
                     
         # training
         for trainer in trainers:
-            trainer.update(step, x)
+            trainer.update(step, act)
     
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):
