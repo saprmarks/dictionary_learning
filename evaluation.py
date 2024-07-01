@@ -15,7 +15,7 @@ def loss_recovered(
     dictionary,  # dictionaries for submodules
     max_len=None,  # max context length for loss recovered
     normalize_batch=False,  # normalize batch before passing through dictionary
-    io="out",  # can be 'in', 'out', or 'in_to_out'
+    io="out",  # can be 'in', 'out', or 'in_and_out'
     tracer_args = {'use_cache': False, 'output_attentions': False}, # minimize cache during model trace.
 ):
     """
@@ -60,6 +60,18 @@ def loss_recovered(
                 submodule.output = (x_hat,)
             else:
                 submodule.output = x_hat
+        elif io == 'in_and_out':
+            x = submodule.input[0]
+            if type(submodule.input.shape) == tuple: x = x[0]
+            print(f'x.shape: {x.shape}')
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x = x * scale
+            y_pred = dictionary(x)
+            if normalize_batch: y_pred = y_pred / scale
+            submodule.output = y_pred
+        else:
+            raise ValueError(f"Invalid value for io: {io}")
 
         logits_reconstructed = model.output.save()
     logits_reconstructed = logits_reconstructed.value
@@ -72,12 +84,14 @@ def loss_recovered(
                 submodule.input[0][:] = t.zeros_like(x[0])
             else:
                 submodule.input = t.zeros_like(x)
-        elif io == 'out':
+        elif io in ['out', 'in_and_out']:
             x = submodule.output
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:] = t.zeros_like(x[0])
             else:
                 submodule.output = t.zeros_like(x)
+        else:
+            raise ValueError(f"Invalid value for io: {io}")
         
         input = model.input.save()
         logits_zero = model.output.save()
@@ -119,7 +133,7 @@ def evaluate(
     activations, # a generator of activations; if an ActivationBuffer, also compute loss recovered
     max_len=128,  # max context length for loss recovered
     batch_size=128,  # batch size for loss recovered
-    io="out",  # can be 'in', 'out', or 'in_to_out'
+    io="out",  # can be 'in', 'out', or 'in_and_out'
     normalize_batch=False, # normalize batch before passing through dictionary
     tracer_args={'use_cache': False, 'output_attentions': False}, # minimize cache during model trace.
     device="cpu",
@@ -142,7 +156,7 @@ def evaluate(
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
         l0 = (f != 0).float().sum(dim=-1).mean()
-        frac_alive = (f != 0).float().mean(dim=-1).mean()
+        frac_alive = f.any(dim=(0,1)).sum() / dictionary.dict_size
 
         # cosine similarity between x and x_hat
         x_normed = x / t.linalg.norm(x, dim=-1, keepdim=True)
