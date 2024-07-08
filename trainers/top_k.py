@@ -126,12 +126,18 @@ class TrainerTopK(SAETrainer):
                  steps=30000, # when when does training end
                  seed=None,
                  device=None,
+                 layer=None,
+                 lm_name=None,
                  wandb_name='AutoEncoderTopK',
     ):
         super().__init__(seed)
 
-        self.steps = steps
+        assert layer is not None and lm_name is not None
+        self.layer = layer
+        self.lm_name = lm_name
+
         self.wandb_name = wandb_name
+        self.steps = steps
         self.k = k
         if seed is not None:
             t.manual_seed(seed)
@@ -275,5 +281,7 @@ class TrainerTopK(SAETrainer):
             'dict_size' : self.ae.dict_size,
             'k': self.ae.k,
             'device' : self.device,
+            "layer" : self.layer,
+            'lm_name' : self.lm_name,
             'wandb_name' : self.wandb_name,
         }
