@@ -65,7 +65,9 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         return nn.functional.relu(self.encoder(x - self.b_dec))
     
     def decode(self, top_acts, top_indices):
-        d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
+        with t.cuda.device(top_indices.device.index):
+            d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
+            d.to(top_indices.device.index)
         return d + self.b_dec
     
     def forward(self, x, output_features=False):
@@ -98,13 +100,12 @@ class AutoEncoderTopK(Dictionary, nn.Module):
             "d_sae, d_sae d_in -> d_sae d_in",
         )
                    
-    def from_pretrained(path, device=None):
+    def from_pretrained(path, k=100, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict['encoder.weight'].shape
-        k = state_dict['k']
         autoencoder = AutoEncoderTopK(activation_dim, dict_size, k)
         autoencoder.load_state_dict(state_dict)
         if device is not None:

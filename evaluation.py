@@ -156,7 +156,7 @@ def evaluate(
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
         l0 = (f != 0).float().sum(dim=-1).mean()
-        frac_alive = f.any(dim=(0,1)).sum() / dictionary.dict_size
+        frac_alive = t.flatten(f, start_dim=0, end_dim=1).any(dim=0).sum() / dictionary.dict_size
 
         # cosine similarity between x and x_hat
         x_normed = x / t.linalg.norm(x, dim=-1, keepdim=True)
