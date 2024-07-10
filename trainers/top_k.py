@@ -113,7 +113,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         return autoencoder
     
 
-class TrainerTopK(SAETrainer):
+class TopKTrainer(SAETrainer):
     """
     Top-K SAE training scheme.
     """
@@ -130,12 +130,14 @@ class TrainerTopK(SAETrainer):
                  layer=None,
                  lm_name=None,
                  wandb_name='AutoEncoderTopK',
+                 submodule_name=None,
     ):
         super().__init__(seed)
 
         assert layer is not None and lm_name is not None
         self.layer = layer
         self.lm_name = lm_name
+        self.submodule_name = submodule_name
 
         self.wandb_name = wandb_name
         self.steps = steps
@@ -231,7 +233,7 @@ class TrainerTopK(SAETrainer):
 
         l2_loss = e.pow(2).sum(dim=-1).mean()
         auxk_loss = auxk_loss.sum(dim=-1).mean()
-        loss = l2_loss + self.auxk_alpha + auxk_loss
+        loss = l2_loss + self.auxk_alpha * auxk_loss
         
         if not logging:
             return loss
@@ -285,4 +287,5 @@ class TrainerTopK(SAETrainer):
             "layer" : self.layer,
             'lm_name' : self.lm_name,
             'wandb_name' : self.wandb_name,
+            'submodule_name' : self.submodule_name,
         }
