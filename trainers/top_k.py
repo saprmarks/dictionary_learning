@@ -65,9 +65,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         return nn.functional.relu(self.encoder(x - self.b_dec))
     
     def decode(self, top_acts, top_indices):
-        with t.cuda.device(top_indices.device.index):
-            d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
-            d.to(top_indices.device.index)
+        d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
         return d + self.b_dec
     
     def forward(self, x, output_features=False):
