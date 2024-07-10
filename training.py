@@ -60,7 +60,7 @@ def trainSAE(
 
     # make save dirs, export config
     if save_dir is not None:
-        save_dirs = [os.path.join(save_dir, f"trainer{i}") for i in range(len(trainer_configs))]
+        save_dirs = [os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))]
         for trainer, dir in zip(trainers, save_dirs):
             os.makedirs(dir, exist_ok=True)
             # save config

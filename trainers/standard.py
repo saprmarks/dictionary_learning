@@ -44,12 +44,14 @@ class StandardTrainer(SAETrainer):
                  layer=None,
                  lm_name=None,
                  wandb_name='StandardTrainer',
+                 submodule_name=None,
     ):
         super().__init__(seed)
 
         assert layer is not None and lm_name is not None
         self.layer = layer
         self.lm_name = lm_name
+        self.submodule_name = submodule_name
 
         if seed is not None:
             t.manual_seed(seed)
@@ -173,4 +175,6 @@ class StandardTrainer(SAETrainer):
             'layer' : self.layer,
             'lm_name' : self.lm_name,
             'wandb_name': self.wandb_name,
+            'submodule_name': self.submodule_name,
         }
+
