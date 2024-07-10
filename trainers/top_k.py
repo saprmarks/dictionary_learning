@@ -231,7 +231,7 @@ class TopKTrainer(SAETrainer):
 
         l2_loss = e.pow(2).sum(dim=-1).mean()
         auxk_loss = auxk_loss.sum(dim=-1).mean()
-        loss = l2_loss + self.auxk_alpha + auxk_loss
+        loss = l2_loss + self.auxk_alpha * auxk_loss
         
         if not logging:
             return loss
