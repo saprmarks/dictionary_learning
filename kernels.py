@@ -203,7 +203,6 @@ def triton_sparse_dense_matmul(
     B = dense.shape[1]
 
     out = torch.zeros(A, B, device=dense.device, dtype=sparse_values.dtype)
-
     with torch.cuda.device(dense.device.index):
         triton_sparse_dense_matmul_kernel[(A,)](
             sparse_indices,

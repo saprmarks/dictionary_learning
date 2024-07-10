@@ -32,7 +32,7 @@ def loss_recovered(
     with model.trace(text, invoker_args=invoker_args):
         logits_original = model.output.save()
     logits_original = logits_original.value
-
+    
     # logits when replacing component activations with reconstruction by autoencoder
     with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
@@ -41,25 +41,12 @@ def loss_recovered(
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
-            x_hat = dictionary(x)
-            if normalize_batch: x_hat = x_hat / scale
-            if type(submodule.input.shape) == tuple:
-                submodule.input[0][:] = x_hat
-            else:
-                submodule.input = x_hat
         elif io == 'out':
             x = submodule.output
             if type(submodule.output.shape) == tuple: x = x[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
-            x_hat = dictionary(x)
-            if normalize_batch: x_hat = x_hat / scale
-
-            if type(submodule.output.shape) == tuple:
-                submodule.output = (x_hat,)
-            else:
-                submodule.output = x_hat
         elif io == 'in_and_out':
             x = submodule.input[0]
             if type(submodule.input.shape) == tuple: x = x[0]
@@ -67,9 +54,39 @@ def loss_recovered(
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
-            y_pred = dictionary(x)
-            if normalize_batch: y_pred = y_pred / scale
-            submodule.output = y_pred
+        else:
+            raise ValueError(f"Invalid value for io: {io}")
+        x = x.save()
+
+    # pull this out so dictionary can be written without FakeTensor (top_k needs this)
+    x_hat = dictionary(x.view(-1, x.shape[-1])).view(x.shape)
+
+    # intervene with `x_hat`
+    with model.trace(text, **tracer_args, invoker_args=invoker_args):
+        if io == 'in':
+            x = submodule.input[0]
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x_hat = x_hat / scale
+            if type(submodule.input.shape) == tuple:
+                submodule.input[0][:] = x_hat
+            else:
+                submodule.input = x_hat
+        elif io == 'out':
+            x = submodule.output
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x_hat = x_hat / scale
+            if type(submodule.output.shape) == tuple:
+                submodule.output = (x_hat,)
+            else:
+                submodule.output = x_hat
+        elif io == 'in_and_out':
+            x = submodule.input[0]
+            if normalize_batch:
+                scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
+                x_hat = x_hat / scale
+            submodule.output = x_hat
         else:
             raise ValueError(f"Invalid value for io: {io}")
 
@@ -151,7 +168,7 @@ def evaluate(
             raise StopIteration(
                 "Not enough activations in buffer. Pass a buffer with a smaller batch size or more data."
             )
-        
+
         x_hat, f = dictionary(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()

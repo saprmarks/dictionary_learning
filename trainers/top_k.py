@@ -69,9 +69,11 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         return d + self.b_dec
     
     def forward(self, x, output_features=False):
-        f = self.encode(x)
+        # (rangell): some shape hacking going on here
+        f = self.encode(x.view(-1, x.shape[-1]))
         top_acts, top_indices = f.topk(self.k, sorted=False)
-        x_hat = self.decode(top_acts, top_indices)
+        x_hat = self.decode(top_acts, top_indices).view(x.shape)
+        f = f.view(*x.shape[:-1], f.shape[-1])
         if not output_features:
             return x_hat
         else:
