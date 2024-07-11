@@ -113,7 +113,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         return autoencoder
     
 
-class TopKTrainer(SAETrainer):
+class TrainerTopK(SAETrainer):
     """
     Top-K SAE training scheme.
     """
