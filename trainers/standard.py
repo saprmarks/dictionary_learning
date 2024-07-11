@@ -166,7 +166,10 @@ class StandardTrainer(SAETrainer):
     @property
     def config(self):
         return {
+            'dict_class': 'AutoEncoder',
             'trainer_class' : 'StandardTrainer',
+            'activation_dim': self.ae.activation_dim,
+            'dict_size': self.ae.dict_size,
             'lr' : self.lr,
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,

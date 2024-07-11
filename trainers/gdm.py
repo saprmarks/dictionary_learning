@@ -45,12 +45,14 @@ class GatedSAETrainer(SAETrainer):
                  layer=None,
                  lm_name=None,
                  wandb_name='GatedSAETrainer',
+                 submodule_name=None,
     ):
         super().__init__(seed)
 
         assert layer is not None and lm_name is not None
         self.layer = layer
         self.lm_name = lm_name
+        self.submodule_name = submodule_name
 
         if seed is not None:
             t.manual_seed(seed)
@@ -114,6 +116,7 @@ class GatedSAETrainer(SAETrainer):
     @property
     def config(self):
         return {
+            'dict_class': 'GatedAutoEncoder',
             'trainer_class' : 'GatedSAETrainer',
             'activation_dim' : self.ae.activation_dim,
             'dict_size' : self.ae.dict_size,
@@ -124,4 +127,5 @@ class GatedSAETrainer(SAETrainer):
             'layer' : self.layer,
             'lm_name' : self.lm_name,
             'wandb_name': self.wandb_name,
+            'submodule_name': self.submodule_name,
         }
