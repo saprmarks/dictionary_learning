@@ -27,6 +27,9 @@ def trainSAE(
                 'wandb_name' : 'StandardTrainer',
             }
         ],
+        use_wandb = False,
+        wandb_entity = "",
+        wandb_project = "",
         steps=None,
         save_steps=None,
         save_dir=None, # use {run} to refer to wandb run
@@ -49,14 +52,18 @@ def trainSAE(
         )
 
     if log_steps is not None:
-        wandb.init(
-            entity="sae-training",
-            project="sae-training",
-            config={f'{trainer.config["wandb_name"]}-{i}' : trainer.config for i, trainer in enumerate(trainers)}
-        )
-        # process save_dir in light of run name
-        if save_dir is not None:
-            save_dir = save_dir.format(run=wandb.run.name)
+        if use_wandb:
+            wandb.init(
+                entity=wandb_entity,
+                project=wandb_project,
+                config={f'{trainer.config["wandb_name"]}-{i}' : trainer.config for i, trainer in enumerate(trainers)}
+            )
+            # process save_dir in light of run name
+            if save_dir is not None:
+                save_dir = save_dir.format(run=wandb.run.name)
+        else:
+            if save_dir is not None:
+                save_dir = save_dir.format(run=trainer_configs.wandb_name)
 
     # make save dirs, export config
     if save_dir is not None:
@@ -129,7 +136,8 @@ def trainSAE(
                     # log.update(
                     #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
                     # )
-            wandb.log(log, step=step)
+            if use_wandb:
+                wandb.log(log, step=step)
 
         # saving
         if save_steps is not None and step % save_steps == 0:
@@ -152,5 +160,5 @@ def trainSAE(
             t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
 
     # End the wandb run
-    if log_steps is not None:
+    if log_steps is not None and use_wandb:
         wandb.finish()
