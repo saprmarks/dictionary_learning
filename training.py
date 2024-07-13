@@ -61,9 +61,6 @@ def trainSAE(
             # process save_dir in light of run name
             if save_dir is not None:
                 save_dir = save_dir.format(run=wandb.run.name)
-        else:
-            if save_dir is not None:
-                save_dir = save_dir.format(run=trainer_configs.wandb_name)
 
     # make save dirs, export config
     if save_dir is not None:
