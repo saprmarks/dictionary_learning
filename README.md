@@ -41,6 +41,10 @@ Dictionaries have `encode`, `decode`, and `forward` methods -- see `dictionary.p
 
 To train your own dictionaries, you'll need to understand a bit about our infrastructure. (See below for downloading our dictionaries.)
 
+This library supports different sparse autoencoder architectures, including standard `AutoEncoder` ([Bricken et al., 2023](https://transformer-circuits.pub/2023/monosemantic-features/index.html)), `GatedAutoEncoder` ([Rajamanoharan et al., 2024](https://arxiv.org/abs/2404.16014)), and `AutoEncoderTopK` ([Gao et al., 2024](https://arxiv.org/abs/2406.04093)).
+Each sparse autoencoder architecture is implemented with a corresponding trainer that implements the training protocol described by the authors.
+This allows us to implement different training protocols (e.g. p-annealing) for different architectures without a lot of overhead. 
+
 One key object is the `ActivationBuffer`, defined in `buffer.py`. Following [Neel Nanda's appraoch](https://www.lesswrong.com/posts/fKuugaxt2XLTkASkk/open-source-replication-and-commentary-on-anthropic-s), `ActivationBuffer`s maintain a buffer of NN activations, which it outputs in batches.
 
 An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a submodule (e.g. an MLP), and a generator which yields strings (the text data). It processes a large number of strings, up to some capacity, and saves the submodule's activations. You sample batches from it, and when it is half-depleted, it refreshes itself with new text data.
