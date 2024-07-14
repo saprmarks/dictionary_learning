@@ -45,7 +45,7 @@ This repository supports different sparse autoencoder architectures, including s
 Each sparse autoencoder architecture is implemented with a corresponding trainer that implements the training protocol described by the authors.
 This allows us to implement different training protocols (e.g. p-annealing) for different architectures without a lot of overhead.
 Specifically, this repository supports the following trainers:
-- [`StandardTrainer`](trainers/standard.py): Implements the standard SAE training scheme described in [Bricken et al., 2023](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder). 
+- [`StandardTrainer`](trainers/standard.py): Implements a training scheme similar to that of [Bricken et al., 2023](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder).
 - [`GatedSAETrainer`](trainers/top_k.py): Implements the training scheme for Gated SAEs described in [Rajamanoharan et al., 2024](https://arxiv.org/abs/2404.16014).
 - [`AutoEncoderTopK`](trainers/gated_anneal.py): Implemented the training scheme for Top-K SAEs described in [Gao et al., 2024](https://arxiv.org/abs/2406.04093).
 - [`PAnnealTrainer`](trainers/p_anneal.py): Extends the `StandardTrainer` by providing the option to anneal the sparsity parameter p.
