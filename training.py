@@ -51,6 +51,7 @@ def trainSAE(
             )
         )
 
+
     if log_steps is not None:
         if use_wandb:
             wandb.init(
