@@ -7,12 +7,15 @@ import umap
 import pandas as pd
 import plotly.express as px
 
+TRACER_KWARGS = {"scan" : False, "validate" : False}
+
 def feature_effect(
         model,
         submodule,
         dictionary,
         feature,
         inputs,
+        max_length=128,
         add_residual=True, # whether to compensate for dictionary reconstruction error by adding residual
         k=10,
         largest=True,
@@ -21,7 +24,7 @@ def feature_effect(
     Effect of ablating the feature on top k predictions for next token.
     """
     # clean run
-    with model.trace(inputs):
+    with t.no_grad(), model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
         if dictionary is None:
             pass
         elif not add_residual: # run hidden state through autoencoder
@@ -37,7 +40,7 @@ def feature_effect(
     clean_logprobs = t.nn.functional.log_softmax(clean_logits, dim=-1)
 
     # ablated run
-    with model.trace(inputs):
+    with t.no_grad(), model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
         if dictionary is None:
             if type(submodule.output.shape) == tuple:
                 submodule.output[0][:, -1, feature] = 0
@@ -85,7 +88,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         dim_idx = random.randint(0, activations.shape[-1]-1)
 
     inputs = buffer.text_batch(batch_size=n_inputs)
-    with model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
+    with t.no_grad(), model.trace(inputs, invoker_args=dict(max_length=max_length, truncation=True)):
         tokens = model.input[1]['input_ids'].save() # if you're getting errors, check here; might only work for pythia models
         activations = submodule.output
         if type(activations.shape) == tuple:
@@ -126,6 +129,7 @@ def examine_dimension(model, submodule, buffer, dictionary=None, max_length=128,
         dictionary,
         dim_idx,
         tokens,
+        max_length=max_length,
         k=k
     )
     top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]

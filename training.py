@@ -6,228 +6,157 @@ import torch as t
 from .dictionary import AutoEncoder
 import os
 from tqdm import tqdm
-
-EPS = 1e-8
-
-class ConstrainedAdam(t.optim.Adam):
-    """
-    A variant of Adam where some of the parameters are constrained to have unit norm.
-    """
-    def __init__(self, params, constrained_params, lr):
-        super().__init__(params, lr=lr)
-        self.constrained_params = list(constrained_params)
-    
-    def step(self, closure=None):
-        with t.no_grad():
-            for p in self.constrained_params:
-                normed_p = p / p.norm(dim=0, keepdim=True)
-                # project away the parallel component of the gradient
-                p.grad -= (p.grad * normed_p).sum(dim=0, keepdim=True) * normed_p
-        super().step(closure=closure)
-        with t.no_grad():
-            for p in self.constrained_params:
-                # renormalize the constrained parameters
-                p /= p.norm(dim=0, keepdim=True)
-
-def entropy(p, eps=1e-8):
-    p_sum = p.sum(dim=-1, keepdim=True)
-    # epsilons for numerical stability    
-    p_normed = p / (p_sum + eps)    
-    p_log = t.log(p_normed + eps)
-    ent = -(p_normed * p_log)
-    
-    # Zero out the entropy where p_sum is zero
-    ent = t.where(p_sum > 0, ent, t.zeros_like(ent))
-
-    return ent.sum(dim=-1).mean()
-
-
-def sae_loss(activations, ae, sparsity_penalty, use_entropy=False, separate=False, num_samples_since_activated=None, ghost_threshold=None):
-    """
-    Compute the loss of an autoencoder on some activations
-    If separate is True, return the MSE loss, the sparsity loss, and the ghost loss separately
-    If num_samples_since_activated is not None, update it in place
-    If ghost_threshold is not None, use it to do ghost grads
-    """
-    if isinstance(activations, tuple): # for cases when the input to the autoencoder is not the same as the output
-        in_acts, out_acts = activations
-    else: # typically the input to the autoencoder is the same as the output
-        in_acts = out_acts = activations
-    
-    ghost_grads = False
-    if ghost_threshold is not None:
-        if num_samples_since_activated is None:
-            raise ValueError("num_samples_since_activated must be provided for ghost grads")
-        ghost_mask = num_samples_since_activated > ghost_threshold
-        if ghost_mask.sum() > 0: # if there are dead neurons
-            ghost_grads = True
-        else:
-            ghost_loss = None
-
-    if not ghost_grads: # if we're not doing ghost grads
-        x_hat, f = ae(in_acts, output_features=True)
-        mse_loss = t.linalg.norm(out_acts - x_hat, dim=-1).mean()
-    
-    else: # if we're doing ghost grads        
-        x_hat, x_ghost, f = ae(in_acts, output_features=True, ghost_mask=ghost_mask)
-        residual = out_acts - x_hat
-        mse_loss = t.linalg.norm(residual, dim=-1).mean()
-        x_ghost = x_ghost * residual.norm(dim=-1, keepdim=True).detach() / (2 * x_ghost.norm(dim=-1, keepdim=True).detach() + EPS)
-        ghost_loss = t.linalg.norm(residual.detach() - x_ghost, dim=-1).mean()
-
-    if num_samples_since_activated is not None: # update the number of samples since each neuron was last activated
-        deads = (f == 0).all(dim=0)
-        num_samples_since_activated.copy_(
-            t.where(
-                deads,
-                num_samples_since_activated + 1,
-                0
-            )
-        )
-    
-    if use_entropy:
-        sparsity_loss = entropy(f)
-    else:
-        sparsity_loss = f.norm(p=1, dim=-1).mean()
-    
-    if separate:
-        if ghost_threshold is None:
-            return mse_loss, sparsity_loss
-        else:
-            return mse_loss, sparsity_loss, ghost_loss
-    else:
-        if not ghost_grads:
-            return mse_loss + sparsity_penalty * sparsity_loss
-        else:
-            return mse_loss + sparsity_penalty * sparsity_loss + ghost_loss * (mse_loss.detach() / (ghost_loss.detach() + EPS))
-
-    
-def resample_neurons(deads, activations, ae, optimizer):
-    """
-    resample dead neurons according to the following scheme:
-    Reinitialize the decoder vector for each dead neuron to be an activation
-    vector v from the dataset with probability proportional to ae's loss on v.
-    Reinitialize all dead encoder vectors to be the mean alive encoder vector x 0.2.
-    Reset the bias vectors for dead neurons to 0.
-    Reset the Adam parameters for the dead neurons to their default values.
-    """
-    with t.no_grad():
-        if deads.sum() == 0:
-            return
-        if isinstance(activations, tuple):
-            in_acts, out_acts = activations
-        else:
-            in_acts = out_acts = activations
-        in_acts = in_acts.reshape(-1, in_acts.shape[-1])
-        out_acts = out_acts.reshape(-1, out_acts.shape[-1])
-
-        # compute the loss for each activation vector
-        losses = (out_acts - ae(in_acts)).norm(dim=-1)
-
-        # sample input to create encoder/decoder weights from
-        n_resample = min([deads.sum(), losses.shape[0]])
-        indices = t.multinomial(losses, num_samples=n_resample, replacement=False)
-        sampled_vecs = activations[indices]
-
-        # get norm of the living neurons
-        alive_norm = ae.encoder.weight[~deads].norm(dim=-1).mean()
-
-        # resample first n_resample dead neurons
-        deads[deads.nonzero()[n_resample:]] = False
-        ae.encoder.weight[deads] = sampled_vecs * alive_norm * 0.2
-        ae.decoder.weight[:,deads] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
-        ae.encoder.bias[deads] = 0.
-
-        # reset Adam parameters for dead neurons
-        state_dict = optimizer.state_dict()['state']
-        ## encoder weight
-        state_dict[1]['exp_avg'][deads] = 0.
-        state_dict[1]['exp_avg_sq'][deads] = 0.
-        ## encoder bias
-        state_dict[2]['exp_avg'][deads] = 0.
-        state_dict[2]['exp_avg_sq'][deads] = 0.
-        ## decoder weight
-        state_dict[3]['exp_avg'][:,deads] = 0.
-        state_dict[3]['exp_avg_sq'][:,deads] = 0.
-
-        
+from .trainers.standard import StandardTrainer
+import wandb
+import json
+# from .evaluation import evaluate
 
 def trainSAE(
-        activations, # a generator that outputs batches of activations
-        activation_dim, # dimension of the activations
-        dictionary_size, # size of the dictionary
-        lr,
-        sparsity_penalty,
-        entropy=False,
-        steps=None, # if None, train until activations are exhausted
-        warmup_steps=1000, # linearly increase the learning rate for this many steps
-        resample_steps=None, # how often to resample dead neurons
-        ghost_threshold=None, # how many steps a neuron has to be dead for it to turn into a ghost
-        save_steps=None, # how often to save checkpoints
-        save_dir=None, # directory for saving checkpoints
-        log_steps=1000, # how often to print statistics
-        device='cpu'):
+        data, 
+        trainer_configs = [
+            {
+                'trainer' : StandardTrainer,
+                'dict_class' : AutoEncoder,
+                'activation_dim' : 512,
+                'dictionary_size' : 64*512,
+                'lr' : 1e-3,
+                'l1_penalty' : 1e-1,
+                'warmup_steps' : 1000,
+                'resample_steps' : None,
+                'seed' : None,
+                'wandb_name' : 'StandardTrainer',
+            }
+        ],
+        use_wandb = False,
+        wandb_entity = "",
+        wandb_project = "",
+        steps=None,
+        save_steps=None,
+        save_dir=None, # use {run} to refer to wandb run
+        log_steps=None,
+        activations_split_by_head=False, # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
+        transcoder=False,
+):
     """
-    Train and return a sparse autoencoder
+    Train SAEs using the given trainers
     """
-    ae = AutoEncoder(activation_dim, dictionary_size).to(device)
-    num_samples_since_activated = t.zeros(dictionary_size, dtype=int).to(device) # how many samples since each neuron was last activated?
 
-    # set up optimizer and scheduler
-    optimizer = ConstrainedAdam(ae.parameters(), ae.decoder.parameters(), lr=lr)
-    if resample_steps is None:
-        def warmup_fn(step):
-            return min(step / warmup_steps, 1.)
+    trainers = []
+    for config in trainer_configs:
+        trainer = config['trainer']
+        del config['trainer']
+        trainers.append(
+            trainer(
+                **config
+            )
+        )
+
+
+    if log_steps is not None:
+        if use_wandb:
+            wandb.init(
+                entity=wandb_entity,
+                project=wandb_project,
+                config={f'{trainer.config["wandb_name"]}-{i}' : trainer.config for i, trainer in enumerate(trainers)}
+            )
+            # process save_dir in light of run name
+            if save_dir is not None:
+                save_dir = save_dir.format(run=wandb.run.name)
+
+    # make save dirs, export config
+    if save_dir is not None:
+        save_dirs = [os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))]
+        for trainer, dir in zip(trainers, save_dirs):
+            os.makedirs(dir, exist_ok=True)
+            # save config
+            config = {'trainer' : trainer.config}
+            try:
+                config['buffer'] = data.config
+            except: pass
+            with open(os.path.join(dir, "config.json"), 'w') as f:
+                json.dump(config, f, indent=4)
     else:
-        def warmup_fn(step):
-            return min((step % resample_steps) / warmup_steps, 1.)
-    scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_fn)
-
-    for step, acts in enumerate(tqdm(activations, total=steps)):
+        save_dirs = [None for _ in trainer_configs]
+    
+    for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
 
-        if isinstance(acts, t.Tensor): # typical casse
-            acts = acts.to(device)
-        elif isinstance(acts, tuple): # for cases where the autoencoder input and output are different
-            acts = tuple(a.to(device) for a in acts)
-
-        optimizer.zero_grad()
-        # computing the sae_loss also updates num_samples_since_activated in place
-        loss = sae_loss(acts, ae, sparsity_penalty, use_entropy=entropy, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-
-        # deal with resampling neurons
-        if resample_steps is not None and step % resample_steps == 0:
-            # resample neurons who've been dead for the last resample_steps / 2 steps
-            resample_neurons(num_samples_since_activated > resample_steps / 2, acts, ae, optimizer)
-
         # logging
         if log_steps is not None and step % log_steps == 0:
+            log = {}
             with t.no_grad():
-                losses = sae_loss(acts, ae, sparsity_penalty, entropy, separate=True, num_samples_since_activated=num_samples_since_activated, ghost_threshold=ghost_threshold)
-                if ghost_threshold is None:
-                    mse_loss, sparsity_loss = losses
-                    print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}")
-                else:
-                    mse_loss, sparsity_loss, ghost_loss = losses
-                    print(f"step {step} MSE loss: {mse_loss}, sparsity loss: {sparsity_loss}, ghost_loss: {ghost_loss}")
-                # dict_acts = ae.encode(acts)
-                # print(f"step {step} % inactive: {(dict_acts == 0).all(dim=0).sum() / dict_acts.shape[-1]}")
-                # if isinstance(activations, ActivationBuffer):
-                #     tokens = activations.tokenized_batch().input_ids
-                #     loss_orig, loss_reconst, loss_zero = reconstruction_loss(tokens, activations.model, activations.submodule, ae)
-                #     print(f"step {step} reconstruction loss: {loss_orig}, {loss_reconst}, {loss_zero}")
+
+                # quick hack to make sure all trainers get the same x
+                # TODO make this less hacky
+                z = act.clone()
+                for i, trainer in enumerate(trainers):
+                    act = z.clone()
+                    if activations_split_by_head: # x.shape: [batch, pos, n_heads, d_head]
+                        act = act[..., i, :] 
+                    trainer_name = f'{trainer.config["wandb_name"]}-{i}'
+                    if not transcoder:
+                        act, act_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x
+
+                        # L0
+                        l0 = (f != 0).float().sum(dim=-1).mean().item()
+                        # fraction of variance explained
+                        total_variance = t.var(act, dim=0).sum()
+                        residual_variance = t.var(act - act_hat, dim=0).sum()
+                        frac_variance_explained = (1 - residual_variance / total_variance)
+                        log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
+                    else: # transcoder
+                        x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x, y
+
+                        # L0
+                        l0 = (f != 0).float().sum(dim=-1).mean().item()
+
+                        # fraction of variance explained
+                        # TODO: adapt for transcoder
+                        # total_variance = t.var(x, dim=0).sum()
+                        # residual_variance = t.var(x - x_hat, dim=0).sum()
+                        # frac_variance_explained = (1 - residual_variance / total_variance)
+                        # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
+
+                    # log parameters from training 
+                    log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
+                    log[f'{trainer_name}/l0'] = l0
+                    trainer_log = trainer.get_logging_parameters()
+                    for name, value in trainer_log.items():
+                        log[f'{trainer_name}/{name}'] = value
+
+                    # TODO get this to work
+                    # metrics = evaluate(
+                    #     trainer.ae, 
+                    #     data, 
+                    #     device=trainer.device
+                    # )
+                    # log.update(
+                    #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
+                    # )
+            if use_wandb:
+                wandb.log(log, step=step)
 
         # saving
-        if save_steps is not None and save_dir is not None and step % save_steps == 0:
-            if not os.path.exists(os.path.join(save_dir, "checkpoints")):
-                os.mkdir(os.path.join(save_dir, "checkpoints"))
-            t.save(
-                ae.state_dict(), 
-                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt")
-                )
+        if save_steps is not None and step % save_steps == 0:
+            for dir, trainer in zip(save_dirs, trainers):
+                if dir is not None:
+                    if not os.path.exists(os.path.join(dir, "checkpoints")):
+                        os.mkdir(os.path.join(dir, "checkpoints"))
+                    t.save(
+                        trainer.ae.state_dict(), 
+                        os.path.join(dir, "checkpoints", f"ae_{step}.pt")
+                        )
+                    
+        # training
+        for trainer in trainers:
+            trainer.update(step, act)
+    
+    # save final SAEs
+    for save_dir, trainer in zip(save_dirs, trainers):
+        if save_dir is not None:
+            t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
 
-    return ae
+    # End the wandb run
+    if log_steps is not None and use_wandb:
+        wandb.finish()
