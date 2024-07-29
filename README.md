@@ -108,9 +108,7 @@ To download our pretrained dictionaries automatically, run:
 ```bash
 ./pretrained_dictionary_downloader.sh
 ```
-Per default, this will download dictionaries of all submodules (~2.5 GB). The `--layers "embed,0,1,2,3,4,5"` flag allows you to select specific layers, e.g append `--layers "embed,2"` to download dictionaries for the outputs of embedding, as well as attention, MLP, and residual stream submodules in layer 2. Optionally, you can download checkpoints for the selected layers with `--checkpoints` (note that checkpoints take up ~10 GB per layer).
-
-Currently, the main thing to look for is the dictionaries in our `10_32768` set; this set has dictionaries for MLP outputs, attention outputs, and residual streams (including embeddings) in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from The Pile.
+This will download dictionaries of all submodules (~2.5 GB) hosted on huggingface. Currently, we provide dictionaries from the `10_32768` training run. This set has dictionaries for MLP outputs, attention outputs, and residual streams (including embeddings) in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from The Pile.
 
 Let's explain the directory structure by example. After using the script above, you'll have a `dictionaries/pythia-70m-deduped/mlp_out_layer1/10_32768` directory corresponding to the layer 1 MLP dictionary from the `10_32768` set. This directory contains:
 * `ae.pt`: the `state_dict` of the fully trained dictionary
