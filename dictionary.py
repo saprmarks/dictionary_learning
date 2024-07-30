@@ -1,3 +1,4 @@
+#%%
 """
 Defines the dictionary classes
 """
@@ -7,12 +8,14 @@ import torch as t
 import torch.nn as nn
 import torch.nn.init as init
 
+
 class Dictionary(ABC):
     """
     A dictionary consists of a collection of vectors, an encoder, and a decoder.
     """
-    dict_size : int # number of features in the dictionary
-    activation_dim : int # dimension of the activation vectors
+
+    dict_size: int  # number of features in the dictionary
+    activation_dim: int  # dimension of the activation vectors
 
     @abstractmethod
     def encode(self, x):
@@ -20,7 +23,7 @@ class Dictionary(ABC):
         Encode a vector x in the activation space.
         """
         pass
-    
+
     @abstractmethod
     def decode(self, f):
         """
@@ -28,10 +31,12 @@ class Dictionary(ABC):
         """
         pass
 
+
 class AutoEncoder(Dictionary, nn.Module):
     """
     A one-layer autoencoder.
     """
+
     def __init__(self, activation_dim, dict_size):
         super().__init__()
         self.activation_dim = activation_dim
@@ -47,10 +52,10 @@ class AutoEncoder(Dictionary, nn.Module):
 
     def encode(self, x):
         return nn.ReLU()(self.encoder(x - self.bias))
-    
+
     def decode(self, f):
         return self.decoder(f) + self.bias
-    
+
     def forward(self, x, output_features=False, ghost_mask=None):
         """
         Forward pass of an autoencoder.
@@ -58,42 +63,46 @@ class AutoEncoder(Dictionary, nn.Module):
         output_features : if True, return the encoded features as well as the decoded x
         ghost_mask : if not None, run this autoencoder in "ghost mode" where features are masked
         """
-        if ghost_mask is None: # normal mode
+        if ghost_mask is None:  # normal mode
             f = self.encode(x)
             x_hat = self.decode(f)
             if output_features:
                 return x_hat, f
             else:
                 return x_hat
-        
-        else: # ghost mode
+
+        else:  # ghost mode
             f_pre = self.encoder(x - self.bias)
             f_ghost = t.exp(f_pre) * ghost_mask.to(f_pre)
             f = nn.ReLU()(f_pre)
 
-            x_ghost = self.decoder(f_ghost) # note that this only applies the decoder weight matrix, no bias
+            x_ghost = self.decoder(
+                f_ghost
+            )  # note that this only applies the decoder weight matrix, no bias
             x_hat = self.decode(f)
             if output_features:
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
-            
+
     def from_pretrained(path, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = AutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
-            
+
+
 class IdentityDict(Dictionary, nn.Module):
     """
     An identity dictionary, i.e. the identity function.
     """
+
     def __init__(self, activation_dim=None):
         super().__init__()
         self.activation_dim = activation_dim
@@ -101,21 +110,23 @@ class IdentityDict(Dictionary, nn.Module):
 
     def encode(self, x):
         return x
-    
+
     def decode(self, f):
         return f
-    
+
     def forward(self, x, output_features=False, ghost_mask=None):
         if output_features:
             return x, x
         else:
             return x
-        
+
+
 class GatedAutoEncoder(Dictionary, nn.Module):
     """
     An autoencoder with separate gating and magnitude networks.
     """
-    def __init__(self, activation_dim, dict_size, initialization='default', device=None):
+
+    def __init__(self, activation_dim, dict_size, initialization="default", device=None):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -125,7 +136,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         self.gate_bias = nn.Parameter(t.empty(dict_size, device=device))
         self.mag_bias = nn.Parameter(t.empty(dict_size, device=device))
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
-        if initialization == 'default':
+        if initialization == "default":
             self._reset_parameters()
         else:
             initialization(self)
@@ -160,7 +171,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         f_mag = nn.ReLU()(pi_mag)
 
         f = f_gate * f_mag
-        
+
         if return_gate:
             return f, nn.ReLU()(pi_gate)
 
@@ -168,7 +179,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
 
     def decode(self, f):
         return self.decoder(f) + self.decoder_bias
-    
+
     def forward(self, x, output_features=False):
         f = self.encode(x)
         x_hat = self.decode(f)
@@ -186,24 +197,26 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = GatedAutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
-    
+
+
 class JumpAutoEncoder(Dictionary, nn.Module):
     """
     An autoencoder with jump ReLUs. Replacement for GatedAutoEncoder.
     """
+
     def __init__(self, activation_dim, dict_size):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.bias = nn.Parameter(t.zeros(activation_dim))
         self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
-        
+
         # jump values added to activated features
         self.jump = nn.Parameter(t.zeros(dict_size))
 
@@ -220,10 +233,10 @@ class JumpAutoEncoder(Dictionary, nn.Module):
             return f, pre_jump
         else:
             return f
-    
+
     def decode(self, f):
         return self.decoder(f) + self.bias
-    
+
     def forward(self, x, output_features=False, output_pre_jump=False):
         """
         Forward pass of an autoencoder.
@@ -238,24 +251,26 @@ class JumpAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
-            
+
     def from_pretrained(path, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = JumpAutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
 
+
 # TODO merge this with AutoEncoder
 class AutoEncoderNew(Dictionary, nn.Module):
     """
     The autoencoder architecture and initialization used in https://transformer-circuits.pub/2024/april-update/index.html#training-saes
     """
+
     def __init__(self, activation_dim, dict_size):
         super().__init__()
         self.activation_dim = activation_dim
@@ -277,10 +292,10 @@ class AutoEncoderNew(Dictionary, nn.Module):
 
     def encode(self, x):
         return nn.ReLU()(self.encoder(x))
-    
+
     def decode(self, f):
         return self.decoder(f)
-    
+
     def forward(self, x, output_features=False):
         """
         Forward pass of an autoencoder.
@@ -288,21 +303,144 @@ class AutoEncoderNew(Dictionary, nn.Module):
         """
         if not output_features:
             return self.decode(self.encode(x))
-        else: # TODO rewrite so that x_hat depends on f
+        else:  # TODO rewrite so that x_hat depends on f
             f = self.encode(x)
             x_hat = self.decode(f)
             # multiply f by decoder column norms
             f = f * self.decoder.weight.norm(dim=0, keepdim=True)
             return x_hat, f
-            
+
     def from_pretrained(path, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = AutoEncoderNew(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+
+
+class AutoEncoderTopKnotriton(Dictionary, nn.Module):
+    """
+    Adaptation of The top-k autoencoder without architecture and initialization used in https://arxiv.org/abs/2406.04093
+    - without Triton integration
+    - apply TopK in encoder step
+    """
+
+    def __init__(self, activation_dim, dict_size, k):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.k = k
+
+        # self.encoder = nn.Linear(activation_dim, dict_size)
+        # self.encoder.bias.data.zero_()
+        # print(self.encoder.weight.data.shape)
+
+        # self.decoder = nn.Linear(self.encoder.weight.data.clone())
+        # self.set_decoder_norm_to_unit_norm()
+        # print(self.decoder.data.shape)
+
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
+
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+        self.decoder.weight = nn.Parameter(self.encoder.weight.data.t().clone())
+        self.set_decoder_norm_to_unit_norm()
+
+        self.b_dec = self.b_dec = nn.Parameter(t.zeros(activation_dim))
+
+    def encode(self, x):
+        post_nonlinearity = nn.functional.relu(self.encoder(x - self.b_dec))
+        post_topk_acts, post_topk_idxs = post_nonlinearity.topk(self.k, sorted=False, keepdim=True, dim=-1)
+        post_topk_dense = t.zeros(post_nonlinearity.shape)
+        post_topk_dense.scatter_(-1, post_topk_idxs, post_topk_acts)
+        return post_topk_dense
+    
+    def decode(self, post_topK):
+        return self.decoder(post_topK) + self.b_dec
+
+    def encode_sparse(self, x):
+        post_nonlinearity = nn.functional.relu(self.encoder(x - self.b_dec))
+        latent_shape = post_nonlinearity.shape
+        flattened_latents = post_nonlinearity.view(-1)
+        post_topK_acts, post_topK_idxs = flattened_latents.topk(self.k, sorted=False)
+        return post_topK_acts, post_topK_idxs, latent_shape
+
+    def decode_sparse(self, post_topK, post_topK_idxs, latent_shape):
+        """
+        Decode a dictionary vector f (i.e. a linear combination of dictionary elements)
+        """
+        d = t.zeros(latent_shape).flatten()
+        d[post_topK_idxs] = post_topK
+        d = d.view(latent_shape)
+        print(f'self.decoder.shape: {self.decoder.shape}')
+        print(f'd.shape: {d.shape}')
+        d = d @ self.decoder
+        return d + self.b_dec
+
+    def forward(self, x, output_features=False):
+        post_topK_acts, post_topK_idxs, latent_shape = self.encode_sparse(x)
+        x_hat = self.decode_sparse(post_topK_acts, post_topK_idxs, latent_shape)
+        if not output_features:
+            return x_hat
+        else:
+            return x_hat, post_topK_acts, post_topK_idxs, latent_shape
+
+    # @t.no_grad()
+    # def set_decoder_norm_to_unit_norm(self):
+    #     eps = t.finfo(self.decoder.dtype).eps
+    #     norm = t.norm(self.decoder.data, dim=1, keepdim=True)
+    #     self.decoder.data /= norm + eps
+
+    @t.no_grad()
+    def set_decoder_norm_to_unit_norm(self):
+        eps = t.finfo(self.decoder.weight.dtype).eps
+        norm = t.norm(self.decoder.weight.data, dim=0, keepdim=True)
+        self.decoder.weight.data /= norm + eps
+
+    def from_pretrained(path, k, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
+        autoencoder = AutoEncoderTopKnotriton(activation_dim, dict_size, k)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+    
+    def from_oai_format(path, k, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
+        autoencoder = AutoEncoderTopKnotriton(activation_dim, dict_size, k)
+        autoencoder.encoder = state_dict["encoder"]
+        autoencoder.decoder = state_dict["decoder"]
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+
+
+# %%
+import torch
+
+# %%
+B, S = 3, 64
+
+activation_dim = 512
+k = 128
+dict_size = 1024
+device = 'cpu'
+ae = AutoEncoderTopKnotriton(activation_dim, dict_size, k).to(device)
+
+random_input = torch.randn(B, S, activation_dim).to(device)
+
+direct_output = ae(random_input)
+latents = ae.encode(random_input)
+decoded_output = ae.decode(*latents)
