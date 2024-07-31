@@ -37,6 +37,20 @@ reconstructed_activations, features = ae(activations, output_features=True)
 ```
 Dictionaries have `encode`, `decode`, and `forward` methods -- see `dictionary.py`.
 
+## Loading JumpReLU SAEs from `sae_lens`
+We have limited support for automatically converting SAEs from `sae_lens`; currently this is only supported for JumpReLU SAEs, but we may expand support if users are interested.
+```python
+from dictionary_learning import JumpReluAutoEncoder
+
+ae = JumpReluAutoEncoder.from_pretrained(
+    load_from_sae_lens=True,
+    release="your_release_name",
+    sae_id="your_sae_id"
+)
+```
+The arguments should should match those used in the `SAE.from_pretrained` call you would use to load an SAE in `sae_lens`. For this to work, `sae_lens` should be installed in your environment.
+
+
 # Training your own dictionaries
 
 To train your own dictionaries, you'll need to understand a bit about our infrastructure. (See below for downloading our dictionaries.)
