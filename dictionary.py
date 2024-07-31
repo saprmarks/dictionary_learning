@@ -193,60 +193,83 @@ class GatedAutoEncoder(Dictionary, nn.Module):
             autoencoder.to(device)
         return autoencoder
     
-class JumpAutoEncoder(Dictionary, nn.Module):
+class JumpReluAutoEncoder(Dictionary, nn.Module):
     """
-    An autoencoder with jump ReLUs. Replacement for GatedAutoEncoder.
+    An autoencoder with jump ReLUs.
     """
+
     def __init__(self, activation_dim, dict_size):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.bias = nn.Parameter(t.zeros(activation_dim))
-        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
-        
-        # jump values added to activated features
-        self.jump = nn.Parameter(t.zeros(dict_size))
+        self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size))
+        self.b_enc = nn.Parameter(t.zeros(dict_size))
+        self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim))
+        self.b_dec = nn.Parameter(t.zeros(activation_dim))
+        self.threshold = nn.Parameter(t.zeros(dict_size))
 
-        # rows of decoder weight matrix are unit vectors
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        dec_weight = t.randn_like(self.decoder.weight)
-        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
-        self.decoder.weight = nn.Parameter(dec_weight)
+        self.apply_b_dec_to_input = False
+
+        # rows of decoder weight matrix are initialized to unit vectors
+        self.W_enc.data = t.randn_like(self.W_enc)
+        self.W_enc.data = self.W_enc / self.W_enc.norm(dim=0, keepdim=True)
+        self.W_dec.data = self.W_enc.data.clone().T
 
     def encode(self, x, output_pre_jump=False):
-        pre_jump = nn.ReLU()(self.encoder(x - self.bias))
-        f = pre_jump + self.jump * (pre_jump > 0)
+        if self.apply_b_dec_to_input:
+            x = x - self.b_dec
+        pre_jump = x @ self.W_enc + self.b_enc
+
+        f = nn.ReLU()(pre_jump * (pre_jump > self.threshold))
+        f = f * self.W_dec.norm(dim=1)
+
         if output_pre_jump:
             return f, pre_jump
         else:
             return f
-    
+        
     def decode(self, f):
-        return self.decoder(f) + self.bias
+        f = f / self.W_dec.norm(dim=1)
+        return f @ self.W_dec + self.b_dec
     
-    def forward(self, x, output_features=False, output_pre_jump=False):
+    def forward(self, x, output_features=False):
         """
         Forward pass of an autoencoder.
         x : activations to be autoencoded
         output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
         """
-        f, pre_jump = self.encode(x, output_pre_jump=True)
+        f = self.encode(x)
         x_hat = self.decode(f)
-        if output_pre_jump:
-            return x_hat, f, pre_jump
-        elif output_features:
+        if output_features:
             return x_hat, f
         else:
             return x_hat
-            
-    def from_pretrained(path, device=None):
+    
+    def from_pretrained(
+            path: str | None = None, 
+            load_from_sae_lens: bool = False,
+            device: t.device | None = None,
+            **kwargs,
+    ):
         """
         Load a pretrained autoencoder from a file.
+        If sae_lens=True, then pass **kwargs to sae_lens's
+        loading function.
         """
-        state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
-        autoencoder = JumpAutoEncoder(activation_dim, dict_size)
-        autoencoder.load_state_dict(state_dict)
+        if not load_from_sae_lens:
+            state_dict = t.load(path)
+            dict_size, activation_dim = state_dict['W_enc'].shape
+            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
+            autoencoder.load_state_dict(state_dict)
+        else:
+            from sae_lens import SAE
+            sae, cfg_dict, _ = SAE.from_pretrained(**kwargs, device=device)
+            assert cfg_dict["finetuning_scaling_factor"] == False, "Finetuning scaling factor not supported"
+            dict_size, activation_dim = cfg_dict["d_sae"], cfg_dict["d_in"]
+            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
+            autoencoder.load_state_dict(sae.state_dict())
+            autoencoder.apply_b_dec_to_input = cfg_dict["apply_b_dec_to_input"]
+
         if device is not None:
             autoencoder.to(device)
         return autoencoder
