@@ -160,20 +160,26 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         f_mag = nn.ReLU()(pi_mag)
 
         f = f_gate * f_mag
-        
+
+        # W_dec norm is not kept constant, as per Anthropic's April 2024 Update
+        # Normalizing after encode, and renormalizing before decode to enable comparability
+        f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+
         if return_gate:
             return f, nn.ReLU()(pi_gate)
 
         return f
 
     def decode(self, f):
+        # W_dec norm is not kept constant, as per Anthropic's April 2024 Update
+        # Normalizing after encode, and renormalizing before decode to enable comparability
+        f = f / self.decoder.weight.norm(dim=0, keepdim=True)
         return self.decoder(f) + self.decoder_bias
     
     def forward(self, x, output_features=False):
         f = self.encode(x)
         x_hat = self.decode(f)
 
-        # TODO: modify so that x_hat depends on f
         f = f * self.decoder.weight.norm(dim=0, keepdim=True)
 
         if output_features:

@@ -47,44 +47,52 @@ class AutoEncoderTopK(Dictionary, nn.Module):
     """
     The top-k autoencoder architecture and initialization used in https://arxiv.org/abs/2406.04093
     """
+
     def __init__(self, activation_dim, dict_size, k):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.k = k
-        
+
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
-        
+
         self.decoder = nn.Parameter(self.encoder.weight.data.clone())
         self.set_decoder_norm_to_unit_norm()
-        
+
         self.b_dec = self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-    def encode(self, x):
-        return nn.functional.relu(self.encoder(x - self.b_dec))
-    
-    def decode(self, top_acts, top_indices):
-        d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
-        return d + self.b_dec
-    
-    def forward(self, x, output_features=False):
-        # (rangell): some shape hacking going on here
-        f = self.encode(x.view(-1, x.shape[-1]))
-        top_acts, top_indices = f.topk(self.k, sorted=False)
-        x_hat = self.decode(top_acts, top_indices).view(x.shape)
-        f = f.view(*x.shape[:-1], f.shape[-1])
+    # def encode(self, x: t.Tensor) -> t.Tensor:
+    #     pre_relu_f = nn.functional.relu(self.encoder(x - self.b_dec))
+    #     top_acts, top_indices = pre_relu_f.topk(self.k, sorted=False, dim=-1)
+    #     buf = top_acts.new_zeros(top_acts.shape[:-1] + (self.decoder.mT.shape[-1],))
+    #     acts = buf.scatter_(dim=-1, index=top_indices, src=top_acts)
+    #     return acts
+
+    def encode(self, x: t.Tensor) -> t.Tensor:
+        post_relu_f = nn.functional.relu(self.encoder(x - self.b_dec))
+        post_topk = post_relu_f.topk(self.k, sorted=False, dim=-1)
+        acts = t.zeros(post_relu_f.shape, device=post_relu_f.device)
+        acts.scatter_(dim=-1, index=post_topk.indices, src=post_topk.values)
+        return acts
+
+    def decode(self, f: t.Tensor) -> t.Tensor:
+        return (f @ self.decoder) + self.b_dec
+
+    def forward(self, x: t.Tensor, output_features: bool = False):
+        f = self.encode(x)
+        x_hat = self.decode(f)
         if not output_features:
             return x_hat
         else:
             return x_hat, f
-        
+
     @t.no_grad()
     def set_decoder_norm_to_unit_norm(self):
         eps = t.finfo(self.decoder.dtype).eps
         norm = t.norm(self.decoder.data, dim=1, keepdim=True)
         self.decoder.data /= norm + eps
-        
+
     @t.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
         assert self.decoder.grad is not None  # keep pyright happy
@@ -99,13 +107,13 @@ class AutoEncoderTopK(Dictionary, nn.Module):
             self.decoder.data,
             "d_sae, d_sae d_in -> d_sae d_in",
         )
-                   
+
     def from_pretrained(path, k=100, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = AutoEncoderTopK(activation_dim, dict_size, k)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
