@@ -73,6 +73,8 @@ Here's an example for training a dictionary; in it we load a language model as a
 ```python
 from nnsight import LanguageModel
 from dictionary_learning import ActivationBuffer
+from dictionary_learning.dictionary import AutoEncoder
+from dictionary_learning.trainers.standard import StandardTrainer
 from dictionary_learning.training import trainSAE
 
 sae_device = "cuda:0"
