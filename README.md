@@ -72,18 +72,16 @@ An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a
 Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
 ```python
 from nnsight import LanguageModel
-from dictionary_learning import ActivationBuffer
-from dictionary_learning.dictionary import AutoEncoder
-from dictionary_learning.trainers.standard import StandardTrainer
+from dictionary_learning import ActivationBuffer, AutoEncoder
+from dictionary_learning.trainers import StandardTrainer
 from dictionary_learning.training import trainSAE
 
-sae_device = "cuda:0"
-activation_device = "cuda:0" # these can be the same but don't have to be
-lm_name = "EleutherAI/pythia-70m-deduped" # this can be any Huggingface model
+device = "cuda:0"
+model_name = "EleutherAI/pythia-70m-deduped" # can be any Huggingface model
 
 model = LanguageModel(
-    lm_name,
-    device_map=activation_device,
+    model_name,
+    device_map=device,
 )
 submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
 activation_dim = 512 # output dimension of the MLP
@@ -96,16 +94,14 @@ data = iter(
         "In real life, for training a dictionary",
         "you would need much more data than this",
     ]
-    * 10_000 # synthetically increase amount of toy data since training only runs 1 epoch
 )
 buffer = ActivationBuffer(
     data=data,
     model=model,
     submodule=submodule,
     d_submodule=activation_dim, # output dimension of the model component
-    n_ctxs=3e2,  # you can set this higher or lower dependong on your available memory
-    out_batch_size=256,
-    device=activation_device,
+    n_ctxs=3e4,  # you can set this higher or lower dependong on your available memory
+    device=device,
 )  # buffer will return batches of tensors of dimension = submodule's output dimension
 
 trainer_cfg = {
@@ -114,18 +110,13 @@ trainer_cfg = {
     "activation_dim": activation_dim,
     "dict_size": dictionary_size,
     "lr": 1e-3,
-    "seed": 0,
-    "wandb_name": "sae_test",
-    "layer": "mlp_1",  # name of the layer in the model, used for logging
-    "lm_name": lm_name,  # name of the model, used for logging
-    "device": sae_device,
+    "device": device,
 }
 
 # train the sparse autoencoder (SAE)
 ae = trainSAE(
     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
     trainer_configs=[trainer_cfg],
-    steps=25,  # you'll want to increase this number in practi
 )
 ```
 Some technical notes our training infrastructure and supported features:
