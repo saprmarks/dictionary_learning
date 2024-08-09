@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import torch as t
 import torch.nn as nn
 import torch.nn.init as init
+import torch.autograd as autograd
 
 class Dictionary(ABC):
     """
@@ -198,13 +199,55 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+
+
+class StepFunction(autograd.Function):
+    @staticmethod
+    def forward(ctx, x, threshold, bandwidth):
+        ctx.save_for_backward(x, threshold)
+        ctx.bandwidth = bandwidth
+        return (x > threshold).float()
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, threshold = ctx.saved_tensors
+        bandwidth = ctx.bandwidth
+        rectangle = ((x - threshold).abs() < bandwidth / 2).float()
+        x_grad = t.zeros_like(grad_output)
+        threshold_grad = - (1.0 / bandwidth) * rectangle * grad_output
+        return x_grad, threshold_grad, None
+
+class JumpReLU(autograd.Function):
+    """
+    A jump ReLU activation function.
+    """
+    @staticmethod
+    def forward(ctx, x, threshold, bandwidth):
+        # save context for backward pass
+        ctx.save_for_backward(x, threshold)
+        ctx.bandwidth = bandwidth
+
+        # apply jump ReLU
+        return x * (x > threshold).float()
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, threshold = ctx.saved_tensors
+        bandwidth = ctx.bandwidth
+
+        # Compute the gradient for x (standard backprop for ReLU part)
+        x_grad = (x > threshold).float() * grad_output
+        rectangle = ((x - threshold).abs() < bandwidth / 2).float()
+        rectangle = rectangle.float()
+        threshold_grad = - (threshold / bandwidth) * rectangle * grad_output
+        return x_grad, threshold_grad, None
     
 class JumpReluAutoEncoder(Dictionary, nn.Module):
     """
     An autoencoder with jump ReLUs.
     """
 
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, pre_encoder_bias=False):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -212,38 +255,50 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         self.b_enc = nn.Parameter(t.zeros(dict_size))
         self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim))
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
-        self.threshold = nn.Parameter(t.zeros(dict_size))
-
-        self.apply_b_dec_to_input = False
+        self.threshold = nn.Parameter(t.ones(dict_size) * 1e-3)
+        self.threshold = nn.Parameter(t.ones(dict_size) * 0)
+        self.bandwidth = 1e-3
 
         # rows of decoder weight matrix are initialized to unit vectors
         self.W_enc.data = t.randn_like(self.W_enc)
         self.W_enc.data = self.W_enc / self.W_enc.norm(dim=0, keepdim=True)
         self.W_dec.data = self.W_enc.data.clone().T
 
-    def encode(self, x, output_pre_jump=False):
-        if self.apply_b_dec_to_input:
-            x = x - self.b_dec
-        pre_jump = x @ self.W_enc + self.b_enc
+        self.pre_encoder_bias = pre_encoder_bias
+        self.set_linear_to_constant = False
 
-        f = nn.ReLU()(pre_jump * (pre_jump > self.threshold))
-        f = f * self.W_dec.norm(dim=1)
+    def encode(self, x, output_pre_jump=False):
+        if self.pre_encoder_bias:
+            x = x - self.b_dec
+
+        pre_jump = x @ self.W_enc + self.b_enc
+        pre_jump = nn.ReLU()(pre_jump) # apply ReLU to pre-jump activations for stable training, see paper
+
+        if not self.set_linear_to_constant:
+            f = JumpReLU.apply(pre_jump, self.threshold, self.bandwidth)
+        else:
+            f = StepFunction.apply(pre_jump, self.threshold, self.bandwidth)
+
+        # f = f * self.W_dec.norm(dim=1) # renormalize f as decoder weights are not normalized
 
         if output_pre_jump:
             return f, pre_jump
         else:
             return f
         
+
     def decode(self, f):
-        f = f / self.W_dec.norm(dim=1)
+        # f = f / self.W_dec.norm(dim=1) # renormalize f as decoder weights are not normalized
         return f @ self.W_dec + self.b_dec
     
-    def forward(self, x, output_features=False):
+    def forward(self, x, output_features=False, set_linear_to_constant=False):
         """
         Forward pass of an autoencoder.
         x : activations to be autoencoded
         output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
         """
+        self.set_linear_to_constant = set_linear_to_constant
+
         f = self.encode(x)
         x_hat = self.decode(f)
         if output_features:
