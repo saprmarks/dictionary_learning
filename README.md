@@ -72,40 +72,51 @@ An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a
 Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
 ```python
 from nnsight import LanguageModel
-from dictionary_learning import ActivationBuffer
+from dictionary_learning import ActivationBuffer, AutoEncoder
+from dictionary_learning.trainers import StandardTrainer
 from dictionary_learning.training import trainSAE
 
+device = "cuda:0"
+model_name = "EleutherAI/pythia-70m-deduped" # can be any Huggingface model
+
 model = LanguageModel(
-    'EleutherAI/pythia-70m-deduped', # this can be any Huggingface model
-    device_map = 'cuda:0'
+    model_name,
+    device_map=device,
 )
 submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
 activation_dim = 512 # output dimension of the MLP
 dictionary_size = 16 * activation_dim
 
-# data much be an iterator that outputs strings
-data = iter([
-    'This is some example data',
-    'In real life, for training a dictionary',
-    'you would need much more data than this'
-])
+# data must be an iterator that outputs strings
+data = iter(
+    [
+        "This is some example data",
+        "In real life, for training a dictionary",
+        "you would need much more data than this",
+    ]
+)
 buffer = ActivationBuffer(
-    data,
-    model,
-    submodule,
+    data=data,
+    model=model,
+    submodule=submodule,
     d_submodule=activation_dim, # output dimension of the model component
-    n_ctxs=3e4, # you can set this higher or lower dependong on your available memory
-    device='cuda:0' # doesn't have to be the same device that you train your autoencoder on
-) # buffer will return batches of tensors of dimension = submodule's output dimension
+    n_ctxs=3e4,  # you can set this higher or lower dependong on your available memory
+    device=device,
+)  # buffer will yield batches of tensors of dimension = submodule's output dimension
+
+trainer_cfg = {
+    "trainer": StandardTrainer,
+    "dict_class": AutoEncoder,
+    "activation_dim": activation_dim,
+    "dict_size": dictionary_size,
+    "lr": 1e-3,
+    "device": device,
+}
 
 # train the sparse autoencoder (SAE)
 ae = trainSAE(
-    buffer,
-    activation_dim,
-    dictionary_size,
-    lr=3e-4,
-    sparsity_penalty=1e-3,
-    device='cuda:0'
+    data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
+    trainer_configs=[trainer_cfg],
 )
 ```
 Some technical notes our training infrastructure and supported features:

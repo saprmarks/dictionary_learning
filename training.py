@@ -18,7 +18,7 @@ def trainSAE(
                 'trainer' : StandardTrainer,
                 'dict_class' : AutoEncoder,
                 'activation_dim' : 512,
-                'dictionary_size' : 64*512,
+                'dict_size' : 64*512,
                 'lr' : 1e-3,
                 'l1_penalty' : 1e-1,
                 'warmup_steps' : 1000,
