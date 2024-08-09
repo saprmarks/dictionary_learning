@@ -102,7 +102,7 @@ buffer = ActivationBuffer(
     d_submodule=activation_dim, # output dimension of the model component
     n_ctxs=3e4,  # you can set this higher or lower dependong on your available memory
     device=device,
-)  # buffer will return batches of tensors of dimension = submodule's output dimension
+)  # buffer will yield batches of tensors of dimension = submodule's output dimension
 
 trainer_cfg = {
     "trainer": StandardTrainer,
