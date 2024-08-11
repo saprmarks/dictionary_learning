@@ -63,6 +63,12 @@ class AutoEncoderTopK(Dictionary, nn.Module):
     `dictionary_learning` prioritizes ease of use, not efficiency. As a result, Triton will only be used in the
     `topk-triton-implementation` branch, which will not be maintained. The main branch will use a TopK format
     compatible with the rest of the library.
+
+    One recommendation if further developing this:
+
+    encode() should return `f`, and decode() should take `f` as input and calculate TopK indices internally.
+    Store the decoder weights as nn.Linear to maintain compatibility with the rest of the library, and perform
+    a transpose operation in the decoder to match the Triton kernel's requirements.
     """
 
     def __init__(self, activation_dim, dict_size, k):
