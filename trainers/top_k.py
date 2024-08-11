@@ -10,7 +10,6 @@ from collections import namedtuple
 
 from ..config import DEBUG
 from ..dictionary import Dictionary
-from ..kernels import TritonDecoder
 from ..trainers.trainer import SAETrainer
 
 
@@ -46,26 +45,16 @@ def geometric_median(points: t.Tensor, max_iter: int = 100, tol: float = 1e-5):
 class AutoEncoderTopK(Dictionary, nn.Module):
     """
     The top-k autoencoder architecture and initialization used in https://arxiv.org/abs/2406.04093
-    NOTE: This implementation uses OpenAI's Triton kernels for the decoder.
-    This causes two issues:
+    NOTE: (From Adam Karvonen) There is an unmaintained implementation using Triton kernels in the topk-triton-implementation branch.
+    We abandoned it as we didn't notice a significant speedup and it added complications, which are noted
+    in the AutoEncoderTopK class docstring in that branch.
 
-    1. encode() returns topk_indices and topk_values, rather than f, because the Triton kernel requires this.
-    This breaks the abstraction we use in other dictionary classes, meaning that TopK doesn't work with
-    evaluation.py, attribution patching, etc.
-    2. The Triton kernel requires the decoder weights to be stored in the same shape as the encoder weights.
-    Thus, accessing TopK decoder vectors is dictionary.decoder[idx, :], while it's dictionary.decoder.weight[:, idx]
-    for everything else.
-
-    When benchmarking TopK training on Pythia70m with and without Triton, I did not notice any significant speedup.
-    This may be because the small size of pythia or `dictionary_learning` isn't sufficiently optimized to
-    take advantage of Triton's speedup.
-
-    `dictionary_learning` prioritizes ease of use, not efficiency. As a result, Triton will only be used in the
-    `topk-triton-implementation` branch, which will not be maintained. The main branch will use a TopK format
-    compatible with the rest of the library.
+    With some additional effort, you can train a Top-K SAE with the Triton kernels and modify the state dict for compatibility with this class.
+    Notably, the Triton kernels currently have the decoder to be stored in nn.Parameter, not nn.Linear, and the decoder weights must also
+    be stored in the same shape as the encoder.
     """
 
-    def __init__(self, activation_dim, dict_size, k):
+    def __init__(self, activation_dim: int, dict_size: int, k: int):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -74,47 +63,61 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
 
-        self.decoder = nn.Parameter(self.encoder.weight.data.clone())
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
+        self.decoder.weight.data = self.encoder.weight.data.clone().T
         self.set_decoder_norm_to_unit_norm()
 
-        self.b_dec = self.b_dec = nn.Parameter(t.zeros(activation_dim))
+        self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-    def encode(self, x):
-        return nn.functional.relu(self.encoder(x - self.b_dec))
+    def encode(self, x: t.Tensor, return_topk: bool = False):
+        post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
+        post_topk = post_relu_feat_acts_BF.topk(self.k, sorted=False, dim=-1)
 
-    def decode(self, top_acts, top_indices):
-        d = TritonDecoder.apply(top_indices, top_acts, self.decoder.mT)
-        return d + self.b_dec
+        # We can't split immediately due to nnsight
+        tops_acts_BK = post_topk.values
+        top_indices_BK = post_topk.indices
 
-    def forward(self, x, output_features=False):
-        # (rangell): some shape hacking going on here
-        f = self.encode(x.view(-1, x.shape[-1]))
-        top_acts, top_indices = f.topk(self.k, sorted=False)
-        x_hat = self.decode(top_acts, top_indices).view(x.shape)
-        f = f.view(*x.shape[:-1], f.shape[-1])
+        buffer_BF = t.zeros_like(post_relu_feat_acts_BF)
+        encoded_acts_BF = buffer_BF.scatter_(dim=-1, index=top_indices_BK, src=tops_acts_BK)
+
+        if return_topk:
+            return encoded_acts_BF, tops_acts_BK, top_indices_BK
+        else:
+            return encoded_acts_BF
+
+    def decode(self, x: t.Tensor) -> t.Tensor:
+        return self.decoder(x) + self.b_dec
+
+    def forward(self, x: t.Tensor, output_features: bool = False):
+        encoded_acts_BF = self.encode(x)
+        x_hat_BD = self.decode(encoded_acts_BF)
+        if not output_features:
+            return x_hat_BD
+        else:
+            return x_hat_BD, encoded_acts_BF
 
     @t.no_grad()
     def set_decoder_norm_to_unit_norm(self):
-        eps = t.finfo(self.decoder.dtype).eps
-        norm = t.norm(self.decoder.data, dim=1, keepdim=True)
-        self.decoder.data /= norm + eps
+        eps = t.finfo(self.decoder.weight.dtype).eps
+        norm = t.norm(self.decoder.weight.data, dim=0, keepdim=True)
+        self.decoder.weight.data /= norm + eps
 
     @t.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
-        assert self.decoder.grad is not None  # keep pyright happy
+        assert self.decoder.weight.grad is not None  # keep pyright happy
 
         parallel_component = einops.einsum(
-            self.decoder.grad,
-            self.decoder.data,
-            "d_sae d_in, d_sae d_in -> d_sae",
+            self.decoder.weight.grad,
+            self.decoder.weight.data,
+            "d_in d_sae, d_in d_sae -> d_sae",
         )
-        self.decoder.grad -= einops.einsum(
+        self.decoder.weight.grad -= einops.einsum(
             parallel_component,
-            self.decoder.data,
-            "d_sae, d_sae d_in -> d_sae d_in",
+            self.decoder.weight.data,
+            "d_sae, d_in d_sae -> d_in d_sae",
         )
 
-    def from_pretrained(path, k=100, device=None):
+    def from_pretrained(path, k: int, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
@@ -198,9 +201,8 @@ class TrainerTopK(SAETrainer):
 
     def loss(self, x, step=None, logging=False):
         # Run the SAE
-        f = self.ae.encode(x)
-        top_acts, top_indices = f.topk(self.k, sorted=False)
-        x_hat = self.ae.decode(top_acts, top_indices)
+        f, top_acts, top_indices = self.ae.encode(x, return_topk=True)
+        x_hat = self.ae.decode(f)
 
         # Measure goodness of reconstruction
         e = x_hat - x
@@ -239,9 +241,12 @@ class TrainerTopK(SAETrainer):
             # Top-k dead latents
             auxk_acts, auxk_indices = auxk_latents.topk(k_aux, sorted=False)
 
+            auxk_buffer_BF = t.zeros_like(f)
+            auxk_acts_BF = auxk_buffer_BF.scatter_(dim=-1, index=auxk_indices, src=auxk_acts)
+
             # Encourage the top ~50% of dead latents to predict the residual of the
             # top k living latents
-            e_hat = self.ae.decode(auxk_acts, auxk_indices)
+            e_hat = self.ae.decode(auxk_acts_BF)
             auxk_loss = (e_hat - e).pow(2)  # .sum(0)
             auxk_loss = scale * t.mean(auxk_loss / total_variance)
         else:
