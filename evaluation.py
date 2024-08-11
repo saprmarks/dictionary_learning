@@ -188,6 +188,11 @@ def evaluate(
         residual_variance = t.var(x - x_hat, dim=0).sum()
         frac_variance_explained = (1 - residual_variance / total_variance)
 
+        # Equation 10 from https://arxiv.org/abs/2404.16014
+        x_hat_norm_squared = t.linalg.norm(x_hat, dim=-1, ord=2)**2
+        x_dot_x_hat = (x * x_hat).sum(dim=-1)
+        relative_reconstruction_bias = x_hat_norm_squared.mean() / x_dot_x_hat.mean()
+
         out["l2_loss"] = l2_loss.item()
         out["l1_loss"] = l1_loss.item()
         out["l0"] = l0.item()
@@ -195,6 +200,7 @@ def evaluate(
         out["frac_variance_explained"] = frac_variance_explained.item()
         out["cossim"] = cossim.item()
         out["l2_ratio"] = l2_ratio.item()
+        out['relative_reconstruction_bias'] = relative_reconstruction_bias.item()
 
         if not isinstance(activations, (ActivationBuffer, NNsightActivationBuffer)):
             return out
