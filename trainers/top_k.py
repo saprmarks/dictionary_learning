@@ -46,7 +46,7 @@ def geometric_median(points: t.Tensor, max_iter: int = 100, tol: float = 1e-5):
 class AutoEncoderTopK(Dictionary, nn.Module):
     """
     The top-k autoencoder architecture and initialization used in https://arxiv.org/abs/2406.04093
-    NOTE: This implementation uses OpenAI's Triton kernels for the decoder.
+    NOTE (From Adam Karvonen): This implementation uses OpenAI's Triton kernels for the decoder.
     This causes two issues:
 
     1. encode() returns topk_indices and topk_values, rather than f, because the Triton kernel requires this.
