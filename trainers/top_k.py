@@ -64,6 +64,9 @@ class AutoEncoderTopK(Dictionary, nn.Module):
     `topk-triton-implementation` branch, which will not be maintained. The main branch will use a TopK format
     compatible with the rest of the library.
 
+    Per @bmk in Eleuther discord, Triton isn't too important for small models and probably isn't required
+    for expansion factor 32 on Llama 3 8b. So it's probably fine for dictionary_learning to not use Triton.
+
     One recommendation if further developing this:
 
     encode() should return `f`, and decode() should take `f` as input and calculate TopK indices internally.
