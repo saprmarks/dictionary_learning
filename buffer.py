@@ -1,5 +1,8 @@
 import torch as t
 from nnsight import LanguageModel
+import gc
+from tqdm import tqdm
+
 from .config import DEBUG
 
 if DEBUG:
@@ -38,7 +41,6 @@ class ActivationBuffer:
             except:
                 raise ValueError("d_submodule cannot be inferred and must be specified directly")
         self.activations = t.empty(0, d_submodule, device=device)
-
         self.read = t.zeros(0).bool()
 
         self.data = data
@@ -48,6 +50,7 @@ class ActivationBuffer:
         self.io = io
         self.n_ctxs = n_ctxs
         self.ctx_len = ctx_len
+        self.activation_buffer_size = n_ctxs * ctx_len
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
@@ -61,7 +64,7 @@ class ActivationBuffer:
         """
         with t.no_grad():
             # if buffer is less than half full, refresh
-            if (~self.read).sum() < self.n_ctxs * self.ctx_len // 2:
+            if (~self.read).sum() < self.activation_buffer_size // 2:
                 self.refresh()
 
             # return a batch
@@ -97,24 +100,50 @@ class ActivationBuffer:
         )
 
     def refresh(self):
+        gc.collect()
+        t.cuda.empty_cache()
         self.activations = self.activations[~self.read]
 
-        while len(self.activations) < self.n_ctxs * self.ctx_len:
-            
+        current_idx = len(self.activations)
+        new_activations = t.empty(self.activation_buffer_size, self.d_submodule, device=self.device)
+
+        new_activations[: len(self.activations)] = self.activations
+        self.activations = new_activations
+
+        # Optional progress bar when filling buffer. At larger models / buffer sizes (e.g. gemma-2-2b, 1M tokens on a 4090) this can take a couple minutes.
+        # pbar = tqdm(total=self.activation_buffer_size, initial=current_idx, desc="Refreshing activations")
+
+        while current_idx < self.activation_buffer_size:
             with t.no_grad():
-                with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}):
-                    if self.io == 'in':
+                with self.model.trace(
+                    self.text_batch(),
+                    **tracer_kwargs,
+                    invoker_args={"truncation": True, "max_length": self.ctx_len},
+                ):
+                    if self.io == "in":
                         hidden_states = self.submodule.input[0].save()
                     else:
                         hidden_states = self.submodule.output.save()
                     input = self.model.input.save()
-            attn_mask = input.value[1]['attention_mask']
+            attn_mask = input.value[1]["attention_mask"]
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
                 hidden_states = hidden_states[0]
             hidden_states = hidden_states[attn_mask != 0]
-            self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
-            self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+
+            remaining_space = self.activation_buffer_size - current_idx
+            assert remaining_space > 0
+            hidden_states = hidden_states[:remaining_space]
+
+            self.activations[current_idx : current_idx + len(hidden_states)] = hidden_states.to(
+                self.device
+            )
+            current_idx += len(hidden_states)
+
+            # pbar.update(len(hidden_states))
+
+        # pbar.close()
+        self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
 
     @property
     def config(self):
