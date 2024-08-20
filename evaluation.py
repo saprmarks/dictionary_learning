@@ -59,7 +59,7 @@ def loss_recovered(
         x = x.save()
 
     # pull this out so dictionary can be written without FakeTensor (top_k needs this)
-    x_hat = dictionary(x.view(-1, x.shape[-1])).view(x.shape)
+    x_hat = dictionary(x.view(-1, x.shape[-1])).view(x.shape).to(model.dtype)
 
     # intervene with `x_hat`
     with model.trace(text, **tracer_args, invoker_args=invoker_args):
