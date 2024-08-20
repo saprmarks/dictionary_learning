@@ -153,7 +153,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
 
         # gating network
         pi_gate = x_enc + self.gate_bias
-        f_gate = (pi_gate > 0).float()
+        f_gate = (pi_gate > 0).to(self.encoder.weight.dtype)
 
         # magnitude network
         pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
