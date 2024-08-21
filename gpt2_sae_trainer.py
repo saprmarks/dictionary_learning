@@ -58,6 +58,7 @@ def run_sae_training(
     save_steps = None
     resample_steps = None
     warmup_steps = 10000
+    normalize_activations = True
 
     learning_rate = 7e-5
     # learning_rate = 1e-4
@@ -88,6 +89,7 @@ def run_sae_training(
         ctx_len=context_length,
         refresh_batch_size=llm_batch_size,
         out_batch_size=sae_batch_size,
+        normalize_activations=normalize_activations,
         io=io,
         d_submodule=activation_dim,
         device=device,
@@ -132,21 +134,21 @@ def run_sae_training(
         )
 
 
-if __name__ == "__main__":
-    args = get_args()
-    run_sae_training(
-        layer=args.layer,
-        save_dir=args.save_dir,
-        device="cuda:0",
-        dry_run=args.dry_run,
-        no_wandb_logging=args.no_wandb_logging,
-    )
-
 # if __name__ == "__main__":
+#     args = get_args()
 #     run_sae_training(
-#         layer=8,
-#         save_dir='/share/u/can/shift_eval/train_saes/trained_saes/gpt2_jumpConst_sweep0808',
+#         layer=args.layer,
+#         save_dir=args.save_dir,
 #         device="cuda:0",
-#         dry_run=False,
-#         no_wandb_logging=True,
+#         dry_run=args.dry_run,
+#         no_wandb_logging=args.no_wandb_logging,
 #     )
+
+if __name__ == "__main__":
+    run_sae_training(
+        layer=8,
+        save_dir='/share/u/can/shift_eval/train_saes/trained_saes/gpt2_jumpConst_sweep0808',
+        device="cuda:0",
+        dry_run=False,
+        no_wandb_logging=False,
+    )

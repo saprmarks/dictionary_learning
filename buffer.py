@@ -23,6 +23,7 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  refresh_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to yield activations
+                 normalize_activations=False, # whether to normalize across resid_dim dimension to have unit norm
                  device='cpu' # device on which to store the activations
                  ):
         
@@ -50,6 +51,7 @@ class ActivationBuffer:
         self.ctx_len = ctx_len
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
+        self.normalize_activations = normalize_activations
         self.device = device
     
     def __iter__(self):
@@ -113,6 +115,8 @@ class ActivationBuffer:
             if isinstance(hidden_states, tuple):
                 hidden_states = hidden_states[0]
             hidden_states = hidden_states[attn_mask != 0]
+            if self.normalize_activations:
+                hidden_states = hidden_states / hidden_states.norm(dim=-1, keepdim=True)
             self.activations = t.cat([self.activations, hidden_states.to(self.device)], dim=0)
             self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
 
