@@ -1,4 +1,4 @@
-circuitsvis>=1.43.2
+# circuitsvis>=1.43.2
 datasets>=2.18.0
 einops>=0.7.0
 matplotlib>=3.8.3

@@ -39,22 +39,22 @@ class JumpReluTrainer(SAETrainer):
         else:
             self.device = device
 
-        self.ae = dict_class(activation_dim, dict_size, pre_encoder_bias=pre_encoder_bias)
+        self.ae = dict_class(activation_dim, dict_size, device=self.device, pre_encoder_bias=pre_encoder_bias)
         self.ae.to(self.device)
         self.lr = lr
         self.warmup_steps = warmup_steps
         self.l0_penalty = l0_penalty
         self.set_linear_to_constant = set_linear_to_constant
 
-        self.optimizer = t.optim.Adam(self.ae.parameters(), betas=(0, 0.999), eps=1e-8)
+        self.optimizer = t.optim.Adam(self.ae.parameters(), betas=(0.9, 0.999), eps=1e-8)
         def warmup_fn(step):
             return min(1, step / warmup_steps)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, warmup_fn)
 
     def loss(self, x, logging=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True, set_linear_to_constant=self.set_linear_to_constant)
-        L_recon = (x - x_hat).pow(2).sum(dim=-1).mean()
-        L_spars = StepFunction.apply(f, self.ae.threshold, self.ae.bandwidth).sum(dim=-1).mean()
+        L_recon = (x - x_hat).pow(2).mean()
+        L_spars = StepFunction.apply(f, self.ae.jump_relu.log_threshold, self.ae.bandwidth).sum(dim=-1).mean()
 
         loss = L_recon + self.l0_penalty * L_spars
 

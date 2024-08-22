@@ -201,53 +201,117 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         return autoencoder
 
 
+# class StepFunction(autograd.Function):
+#     @staticmethod
+#     def forward(ctx, x, threshold, bandwidth):
+#         ctx.save_for_backward(x, threshold)
+#         ctx.bandwidth = bandwidth
+#         return (x > threshold).float()
+    
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         x, threshold = ctx.saved_tensors
+#         bandwidth = ctx.bandwidth
+#         rectangle = ((x - threshold).abs() < bandwidth / 2).float()
+#         x_grad = t.zeros_like(grad_output)
+#         threshold_grad = - (1.0 / bandwidth) * rectangle * grad_output
+#         return x_grad, threshold_grad, None
+
+# class JumpReLU(autograd.Function):
+#     """
+#     A jump ReLU activation function.
+#     """
+#     @staticmethod
+#     def forward(ctx, x, threshold, bandwidth):
+#         # save context for backward pass
+#         ctx.save_for_backward(x, threshold)
+#         ctx.bandwidth = bandwidth
+
+#         # apply jump ReLU
+#         return x * (x > threshold).float()
+    
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         x, threshold = ctx.saved_tensors
+#         bandwidth = ctx.bandwidth
+
+#         # Compute the gradient for x (standard backprop for ReLU part)
+#         x_grad = (x > threshold).float() * grad_output
+#         rectangle = ((x - threshold).abs() < bandwidth / 2).float()
+#         rectangle = rectangle.float()
+#         threshold_grad = - (threshold / bandwidth) * rectangle * grad_output
+#         return x_grad, threshold_grad, None
+
+
+class RectangleFunction(autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        return ((x > -0.5) & (x < 0.5)).float()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (x,) = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[(x <= -0.5) | (x >= 0.5)] = 0
+        return grad_input
+
+class JumpReLUFunction(autograd.Function):
+    @staticmethod
+    def forward(ctx, x, log_threshold, bandwidth):
+        ctx.save_for_backward(x, log_threshold, t.tensor(bandwidth))
+        threshold = t.exp(log_threshold)
+        return x * (x > threshold).float()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, log_threshold, bandwidth_tensor = ctx.saved_tensors
+        bandwidth = bandwidth_tensor.item()
+        threshold = t.exp(log_threshold)
+        x_grad = (x > threshold).float() * grad_output
+        threshold_grad = (
+            -(threshold / bandwidth)
+            * RectangleFunction.apply((x - threshold) / bandwidth)
+            * grad_output
+        )
+        return x_grad, threshold_grad, None  # None for bandwidth
+
+class JumpReLU(nn.Module):
+    def __init__(self, feature_size, bandwidth, device='cpu'):
+        super(JumpReLU, self).__init__()
+        self.log_threshold = nn.Parameter(t.zeros(feature_size, device=device))
+        self.bandwidth = bandwidth
+
+    def forward(self, x):
+        return JumpReLUFunction.apply(x, self.log_threshold, self.bandwidth)
+
 class StepFunction(autograd.Function):
     @staticmethod
-    def forward(ctx, x, threshold, bandwidth):
-        ctx.save_for_backward(x, threshold)
-        ctx.bandwidth = bandwidth
+    def forward(ctx, x, log_threshold, bandwidth):
+        ctx.save_for_backward(x, log_threshold, t.tensor(bandwidth))
+        threshold = t.exp(log_threshold)
         return (x > threshold).float()
-    
+
     @staticmethod
     def backward(ctx, grad_output):
-        x, threshold = ctx.saved_tensors
-        bandwidth = ctx.bandwidth
-        rectangle = ((x - threshold).abs() < bandwidth / 2).float()
-        x_grad = t.zeros_like(grad_output)
-        threshold_grad = - (1.0 / bandwidth) * rectangle * grad_output
-        return x_grad, threshold_grad, None
+        x, log_threshold, bandwidth_tensor = ctx.saved_tensors
+        bandwidth = bandwidth_tensor.item()
+        threshold = t.exp(log_threshold)
+        x_grad = t.zeros_like(x)
+        threshold_grad = (
+            -(1.0 / bandwidth)
+            * RectangleFunction.apply((x - threshold) / bandwidth)
+            * grad_output
+        )
+        return x_grad, threshold_grad, None  # None for bandwidth
 
-class JumpReLU(autograd.Function):
-    """
-    A jump ReLU activation function.
-    """
-    @staticmethod
-    def forward(ctx, x, threshold, bandwidth):
-        # save context for backward pass
-        ctx.save_for_backward(x, threshold)
-        ctx.bandwidth = bandwidth
-
-        # apply jump ReLU
-        return x * (x > threshold).float()
-    
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, threshold = ctx.saved_tensors
-        bandwidth = ctx.bandwidth
-
-        # Compute the gradient for x (standard backprop for ReLU part)
-        x_grad = (x > threshold).float() * grad_output
-        rectangle = ((x - threshold).abs() < bandwidth / 2).float()
-        rectangle = rectangle.float()
-        threshold_grad = - (threshold / bandwidth) * rectangle * grad_output
-        return x_grad, threshold_grad, None
     
 class JumpReluAutoEncoder(Dictionary, nn.Module):
     """
     An autoencoder with jump ReLUs.
     """
 
-    def __init__(self, activation_dim, dict_size, pre_encoder_bias=False):
+    def __init__(self, activation_dim, dict_size, device, pre_encoder_bias=False, normalize_input=True):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
@@ -255,34 +319,46 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         self.b_enc = nn.Parameter(t.zeros(dict_size))
         self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim))
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
-        self.threshold = nn.Parameter(t.ones(dict_size) * 1e-3)
-        self.threshold = nn.Parameter(t.ones(dict_size) * 0)
         self.bandwidth = 1e-3
+        self.device = device
 
         # rows of decoder weight matrix are initialized to unit vectors
         self.W_enc.data = t.randn_like(self.W_enc)
         self.W_enc.data = self.W_enc / self.W_enc.norm(dim=0, keepdim=True)
         self.W_dec.data = self.W_enc.data.clone().T
 
+        self.jump_relu = JumpReLU(dict_size, self.bandwidth, self.device)
+
         self.pre_encoder_bias = pre_encoder_bias
         self.set_linear_to_constant = False
+        self.normalize_input = normalize_input
+
+    def normalize_input_activations(self, x):
+        x_mean = x.mean(dim=-1, keepdim=True)
+        x = x - x_mean
+        x_std = x.std(dim=-1, keepdim=True)
+        x = x / (x_std + 1e-5)
+        return x, x_mean, x_std
+
 
     def encode(self, x, output_pre_jump=False):
+        if self.normalize_input:
+            x, x_mean, x_std = self.normalize_input_activations(x)
+
         if self.pre_encoder_bias:
             x = x - self.b_dec
 
-        pre_jump = x @ self.W_enc + self.b_enc
-        pre_jump = nn.ReLU()(pre_jump) # apply ReLU to pre-jump activations for stable training, see paper
+        pre_activations = t.relu(x @ self.W_enc + self.b_enc) # apply ReLU to pre-jump activations for stable training, see paper
 
         if not self.set_linear_to_constant:
-            f = JumpReLU.apply(pre_jump, self.threshold, self.bandwidth)
+            f = self.jump_relu(pre_activations)
         else:
-            f = StepFunction.apply(pre_jump, self.threshold, self.bandwidth)
+            f = StepFunction.apply(pre_activations, self.jump_relu.log_threshold, self.bandwidth)
 
         # f = f * self.W_dec.norm(dim=1) # renormalize f as decoder weights are not normalized
 
         if output_pre_jump:
-            return f, pre_jump
+            return f, pre_activations
         else:
             return f
         
