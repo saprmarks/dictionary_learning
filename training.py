@@ -34,9 +34,9 @@ def log_stats(
     trainers,
     step: int,
     act: t.Tensor,
-    log_queues: list,
     activations_split_by_head: bool,
     transcoder: bool,
+    log_queues: list=[],
 ):
     with t.no_grad():
         # quick hack to make sure all trainers get the same x
@@ -69,7 +69,8 @@ def log_stats(
             for name, value in trainer_log.items():
                 log[f"{name}"] = value
 
-            log_queues[i].put(log)
+            if log_queues:
+                log_queues[i].put(log)
 
 
 def trainSAE(
@@ -135,7 +136,7 @@ def trainSAE(
         # logging
         if log_steps is not None and step % log_steps == 0:
             log_stats(
-                trainers, step, act, log_queues, activations_split_by_head, transcoder
+                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues
             )
 
         # saving
