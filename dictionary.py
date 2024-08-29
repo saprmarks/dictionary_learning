@@ -204,15 +204,15 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
     An autoencoder with jump ReLUs.
     """
 
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, device='cpu'):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size))
-        self.b_enc = nn.Parameter(t.zeros(dict_size))
-        self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim))
-        self.b_dec = nn.Parameter(t.zeros(activation_dim))
-        self.threshold = nn.Parameter(t.zeros(dict_size))
+        self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size, device=device))
+        self.b_enc = nn.Parameter(t.zeros(dict_size, device=device))
+        self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim, device=device))
+        self.b_dec = nn.Parameter(t.zeros(activation_dim, device=device))
+        self.threshold = nn.Parameter(t.zeros(dict_size, device=device))
 
         self.apply_b_dec_to_input = False
 
