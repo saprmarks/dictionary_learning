@@ -2,12 +2,12 @@
 Defines the dictionary classes
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractclassmethod, abstractmethod
 import torch as t
 import torch.nn as nn
 import torch.nn.init as init
 
-class Dictionary(ABC):
+class Dictionary(ABC, nn.Module):
     """
     A dictionary consists of a collection of vectors, an encoder, and a decoder.
     """
@@ -27,6 +27,15 @@ class Dictionary(ABC):
         Decode a dictionary vector f (i.e. a linear combination of dictionary elements)
         """
         pass
+
+    @classmethod
+    @abstractmethod
+    def from_pretrained(cls, path, device=None, **kwargs) -> "Dictionary":
+        """
+        Load a pretrained dictionary from a file.
+        """
+        pass
+
 
 class AutoEncoder(Dictionary, nn.Module):
     """
@@ -77,17 +86,18 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
-            
-    def from_pretrained(path, device=None):
+    
+    @classmethod
+    def from_pretrained(cls, path, dtype=t.float, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict['encoder.weight'].shape
-        autoencoder = AutoEncoder(activation_dim, dict_size)
+        autoencoder = cls(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
-            autoencoder.to(device)
+            autoencoder.to(dtype=dtype, device=device)
         return autoencoder
             
 class IdentityDict(Dictionary, nn.Module):
@@ -110,6 +120,13 @@ class IdentityDict(Dictionary, nn.Module):
             return x, x
         else:
             return x
+        
+    @classmethod
+    def from_pretrained(cls, path, dtype=t.float, device=None):
+        """
+        Load a pretrained dictionary from a file.
+        """
+        return cls(None)
         
 class GatedAutoEncoder(Dictionary, nn.Module):
     """
@@ -251,9 +268,12 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         else:
             return x_hat
     
+    @classmethod
     def from_pretrained(
+            cls,
             path: str | None = None, 
             load_from_sae_lens: bool = False,
+            dtype: t.dtype = t.float32,
             device: t.device | None = None,
             **kwargs,
     ):
@@ -269,16 +289,16 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             autoencoder.load_state_dict(state_dict)
         else:
             from sae_lens import SAE
-            sae, cfg_dict, _ = SAE.from_pretrained(**kwargs, device=device)
+            sae, cfg_dict, _ = SAE.from_pretrained(**kwargs)
             assert cfg_dict["finetuning_scaling_factor"] == False, "Finetuning scaling factor not supported"
             dict_size, activation_dim = cfg_dict["d_sae"], cfg_dict["d_in"]
-            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
+            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size, device=device)
             autoencoder.load_state_dict(sae.state_dict())
             autoencoder.apply_b_dec_to_input = cfg_dict["apply_b_dec_to_input"]
 
         if device is not None:
-            autoencoder.to(device)
-        return autoencoder
+            device = autoencoder.W_enc.device
+        return autoencoder.to(dtype=dtype, device=device)
 
 # TODO merge this with AutoEncoder
 class AutoEncoderNew(Dictionary, nn.Module):
