@@ -86,6 +86,9 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
+
+    def hacked_forward_for_sfc(self, x):
+        return self.forward(x, output_features=True)
     
     @classmethod
     def from_pretrained(cls, path, dtype=t.float, device=None):
@@ -267,6 +270,21 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
+
+    def hacked_forward_for_sfc(self, x):
+        W_enc, W_dec = self.W_enc.data, self.W_dec.data
+        b_enc, b_dec = self.b_enc.data, self.b_dec.data
+
+        # hacking around an nnsight bug
+        pre_jump = x @ W_enc + b_enc
+        f = nn.ReLU()(pre_jump * (pre_jump > self.threshold))
+        f = f * W_dec.norm(dim=1)
+
+        f_normed = f / W_dec.norm(dim=1)
+        x_hat = f_normed @ W_dec + b_dec
+
+        return x_hat, f
+
     
     @classmethod
     def from_pretrained(
