@@ -1,9 +1,9 @@
 import torch as t
 import torch.nn as nn
+import torch.nn.functional as F
 import einops
 from collections import namedtuple
 
-from ..config import DEBUG
 from ..dictionary import Dictionary
 from ..trainers.trainer import SAETrainer
 
@@ -13,7 +13,9 @@ class BatchTopKSAE(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.k = k
+
+        assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
+        self.register_buffer("k", t.tensor(k))
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
@@ -72,6 +74,21 @@ class BatchTopKSAE(Dictionary, nn.Module):
             self.decoder.weight.data,
             "d_sae, d_in d_sae -> d_in d_sae",
         )
+
+    @classmethod
+    def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        if k is None:
+            k = state_dict['k'].item()
+        elif 'k' in state_dict and k != state_dict['k'].item():
+            raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
+
+        autoencoder = cls(activation_dim, dict_size, k)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
 
 
 class TrainerBatchTopK(SAETrainer):
@@ -148,7 +165,9 @@ class TrainerBatchTopK(SAETrainer):
             acts_aux = t.zeros_like(acts[:, dead_features]).scatter(
                 -1, acts_topk_aux.indices, acts_topk_aux.values
             )
-            x_reconstruct_aux = acts_aux @ self.W_dec[dead_features]
+            x_reconstruct_aux = F.linear(
+                acts_aux, self.ae.decoder.weight[:, dead_features]
+            )
             l2_loss_aux = (
                 self.auxk_alpha
                 * (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
