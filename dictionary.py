@@ -390,11 +390,9 @@ class CrossCoderEncoder(nn.Module):
         )
         self.bias = nn.Parameter(th.zeros(num_layers, dict_size))
 
-    def forward(
-        self, x: th.Tensor
-    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+    def forward(self, x: th.Tensor) -> th.Tensor:  # (batch_size, activation_dim)
         # x: (batch_size, n_layers, activation_dim)
-        return relu(th.einsum("bld, ldD -> blD", x, self.weight) + self.bias)
+        return relu(th.einsum("bld, ldD -> blD", x, self.weight) + self.bias).sum(dim=1)
 
 
 class CrossCoderDecoder(nn.Module):
@@ -416,7 +414,7 @@ class CrossCoderDecoder(nn.Module):
         self, f: th.Tensor
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # f: (batch_size, n_layers, dict_size)
-        return relu(th.einsum("blD, lDd -> bld", f, self.weight) + self.bias)
+        return relu(th.einsum("bD, lDd -> bld", f, self.weight) + self.bias)
 
 
 class CrossCoder(Dictionary, nn.Module):
@@ -457,7 +455,7 @@ class CrossCoder(Dictionary, nn.Module):
 
         if output_features:
             # Scale features by decoder column norms
-            f_scaled = f * self.decoder.weight.norm(dim=2, keepdim=True).sum(
+            f_scaled = f * self.decoder.weight.norm(dim=2).sum(
                 dim=0, keepdim=True
             )  # Also sum across layers for the loss
             return x_hat, f_scaled
