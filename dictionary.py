@@ -374,95 +374,78 @@ class AutoEncoderNew(Dictionary, nn.Module):
         return autoencoder
 
 
-class JumpReluCrossCoder2Models(Dictionary, nn.Module):
+class AutoEncoderNewCrossCoder2Models(Dictionary, nn.Module):
     """
-    A cross-coder with jump ReLUs.
+    A cross-coder using the AutoEncoderNew architecture for two models.
     """
 
-    def __init__(self, activation_dim, dict_size, device="cpu"):
+    def __init__(self, activation_dim, dict_size):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.W_enc1 = nn.Parameter(th.empty(activation_dim, dict_size, device=device))
-        self.b_enc1 = nn.Parameter(th.zeros(dict_size, device=device))
-        self.W_dec1 = nn.Parameter(th.empty(dict_size, activation_dim, device=device))
-        self.b_dec1 = nn.Parameter(th.zeros(activation_dim, device=device))
-        self.threshold1 = nn.Parameter(th.zeros(dict_size, device=device))
+        
+        # Model 1
+        self.encoder1 = nn.Linear(activation_dim, dict_size, bias=True)
+        self.decoder1 = nn.Linear(dict_size, activation_dim, bias=True)
+        
+        # Model 2
+        self.encoder2 = nn.Linear(activation_dim, dict_size, bias=True)
+        self.decoder2 = nn.Linear(dict_size, activation_dim, bias=True)
 
-        self.W_enc2 = nn.Parameter(th.empty(activation_dim, dict_size, device=device))
-        self.b_enc2 = nn.Parameter(th.zeros(dict_size, device=device))
-        self.W_dec2 = nn.Parameter(th.empty(dict_size, activation_dim, device=device))
-        self.b_dec2 = nn.Parameter(th.zeros(activation_dim, device=device))
-        self.threshold2 = nn.Parameter(th.zeros(dict_size, device=device))
+        self._initialize_weights()
 
-        self.apply_b_dec_to_input = False
+    def _initialize_weights(self):
+        for encoder, decoder in [(self.encoder1, self.decoder1), (self.encoder2, self.decoder2)]:
+            w = th.randn(self.activation_dim, self.dict_size)
+            w = w / w.norm(dim=0, keepdim=True) * 0.1
+            encoder.weight = nn.Parameter(w.clone().T)
+            decoder.weight = nn.Parameter(w.clone())
 
-        # rows of decoder weight matrix are initialized to unit vectors
-        self.W_enc1.data = th.randn_like(self.W_enc1)
-        self.W_enc1.data = self.W_enc1 / self.W_enc1.norm(dim=0, keepdim=True)
-        self.W_dec1.data = self.W_enc1.data.clone().T
-        self.W_enc2.data = th.randn_like(self.W_enc2)
-        self.W_enc2.data = self.W_enc2 / self.W_enc2.norm(dim=0, keepdim=True)
-        self.W_dec2.data = self.W_enc2.data.clone().T
+            # initialize biases to zeros
+            init.zeros_(encoder.bias)
+            init.zeros_(decoder.bias)
 
-    def encode(self, x: tuple[th.Tensor, th.Tensor], output_pre_jump=False):
+    def encode(self, x: tuple[th.Tensor, th.Tensor]):
         x1, x2 = x
-        if self.apply_b_dec_to_input:
-            x1 = x1 - self.b_dec1
-            x2 = x2 - self.b_dec2
-        pre_jump1 = x1 @ self.W_enc1 + self.b_enc1
-        pre_jump2 = x2 @ self.W_enc2 + self.b_enc2
-
-        f1 = nn.ReLU()(pre_jump1 * (pre_jump1 > self.threshold1))
-        f2 = nn.ReLU()(pre_jump2 * (pre_jump2 > self.threshold2))
-        f1 = f1 * self.W_dec1.norm(dim=1)
-        f2 = f2 * self.W_dec2.norm(dim=1)
-
-        if output_pre_jump:
-            return f1, f2, pre_jump1, pre_jump2
-        else:
-            return f1, f2
+        return nn.ReLU()(self.encoder1(x1)), nn.ReLU()(self.encoder2(x2))
 
     def decode(self, f: tuple[th.Tensor, th.Tensor]):
         f1, f2 = f
-        f1 = f1 / self.W_dec1.norm(dim=1)
-        f2 = f2 / self.W_dec2.norm(dim=1)
-        return f1 @ self.W_dec1 + self.b_dec1, f2 @ self.W_dec2 + self.b_dec2
+        return self.decoder1(f1), self.decoder2(f2)
 
     def forward(self, x: tuple[th.Tensor, th.Tensor], output_features=False):
         """
-        Forward pass of an autoencoder.
-        x : tuple of activations to be autoencoded
-        output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
+        Forward pass of the cross-coder.
+        x : tuple of activations to be encoded and decoded
+        output_features : if True, return the encoded features as well as the decoded x
         """
         f = self.encode(x)
         x_hat = self.decode(f)
+        
         if output_features:
-            return x_hat, f
+            # Scale features by decoder column norms
+            f1_scaled = f[0] * self.decoder1.weight.norm(dim=0, keepdim=True)
+            f2_scaled = f[1] * self.decoder2.weight.norm(dim=0, keepdim=True)
+            return x_hat, (f1_scaled, f2_scaled)
         else:
             return x_hat
 
     @classmethod
     def from_pretrained(
         cls,
-        path: str | None = None,
-        load_from_sae_lens: bool = False,
+        path: str,
         dtype: th.dtype = th.float32,
         device: th.device | None = None,
-        # **kwargs,
     ):
         """
-        Load a pretrained autoencoder from a file.
-        If sae_lens=True, then pass **kwargs to sae_lens's
-        loading function.
+        Load a pretrained cross-coder from a file.
         """
-        if not load_from_sae_lens:
-            state_dict = th.load(path, weights_only=True)
-            dict_size, activation_dim = state_dict["W_enc1"].shape
-            autoencoder = JumpReluCrossCoder2Models(activation_dim, dict_size)
-            autoencoder.load_state_dict(state_dict)
-        else:
-            raise NotImplementedError("SAE-Lens not yet supported")
+        state_dict = th.load(path, map_location='cpu')
+        dict_size, activation_dim = state_dict["encoder1.weight"].shape
+        cross_coder = cls(activation_dim, dict_size)
+        cross_coder.load_state_dict(state_dict)
+        
         if device is not None:
-            device = autoencoder.W_enc1.device
-        return autoencoder.to(dtype=dtype, device=device)
+            cross_coder = cross_coder.to(device)
+        return cross_coder.to(dtype=dtype)
+
