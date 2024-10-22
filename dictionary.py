@@ -355,3 +355,97 @@ class AutoEncoderNew(Dictionary, nn.Module):
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+
+
+class JumpReluCrossCoder2Models(Dictionary, nn.Module):
+    """
+    A cross-coder with jump ReLUs.
+    """
+
+    def __init__(self, activation_dim, dict_size, device="cpu"):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.W_enc1 = nn.Parameter(t.empty(activation_dim, dict_size, device=device))
+        self.b_enc1 = nn.Parameter(t.zeros(dict_size, device=device))
+        self.W_dec1 = nn.Parameter(t.empty(dict_size, activation_dim, device=device))
+        self.b_dec1 = nn.Parameter(t.zeros(activation_dim, device=device))
+        self.threshold1 = nn.Parameter(t.zeros(dict_size, device=device))
+
+        self.W_enc2 = nn.Parameter(t.empty(activation_dim, dict_size, device=device))
+        self.b_enc2 = nn.Parameter(t.zeros(dict_size, device=device))
+        self.W_dec2 = nn.Parameter(t.empty(dict_size, activation_dim, device=device))
+        self.b_dec2 = nn.Parameter(t.zeros(activation_dim, device=device))
+        self.threshold2 = nn.Parameter(t.zeros(dict_size, device=device))
+
+        self.apply_b_dec_to_input = False
+
+        # rows of decoder weight matrix are initialized to unit vectors
+        self.W_enc1.data = t.randn_like(self.W_enc1)
+        self.W_enc1.data = self.W_enc1 / self.W_enc1.norm(dim=0, keepdim=True)
+        self.W_dec1.data = self.W_enc1.data.clone().T
+        self.W_enc2.data = t.randn_like(self.W_enc2)
+        self.W_enc2.data = self.W_enc2 / self.W_enc2.norm(dim=0, keepdim=True)
+        self.W_dec2.data = self.W_enc2.data.clone().T
+
+    def encode(self, x: tuple[t.Tensor, t.Tensor], output_pre_jump=False):
+        x1, x2 = x
+        if self.apply_b_dec_to_input:
+            x1 = x1 - self.b_dec1
+            x2 = x2 - self.b_dec2
+        pre_jump1 = x1 @ self.W_enc1 + self.b_enc1
+        pre_jump2 = x2 @ self.W_enc2 + self.b_enc2
+
+        f1 = nn.ReLU()(pre_jump1 * (pre_jump1 > self.threshold1))
+        f2 = nn.ReLU()(pre_jump2 * (pre_jump2 > self.threshold2))
+        f1 = f1 * self.W_dec1.norm(dim=1)
+        f2 = f2 * self.W_dec2.norm(dim=1)
+
+        if output_pre_jump:
+            return f1, f2, pre_jump1, pre_jump2
+        else:
+            return f1, f2
+
+    def decode(self, f: tuple[t.Tensor, t.Tensor]):
+        f1, f2 = f
+        f1 = f1 / self.W_dec1.norm(dim=1)
+        f2 = f2 / self.W_dec2.norm(dim=1)
+        return f1 @ self.W_dec1 + self.b_dec1, f2 @ self.W_dec2 + self.b_dec2
+
+    def forward(self, x: tuple[t.Tensor, t.Tensor], output_features=False):
+        """
+        Forward pass of an autoencoder.
+        x : tuple of activations to be autoencoded
+        output_features : if True, return the encoded features (and their pre-jump version) as well as the decoded x
+        """
+        f = self.encode(x)
+        x_hat = self.decode(f)
+        if output_features:
+            return x_hat, f
+        else:
+            return x_hat
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        path: str | None = None,
+        load_from_sae_lens: bool = False,
+        dtype: t.dtype = t.float32,
+        device: t.device | None = None,
+        # **kwargs,
+    ):
+        """
+        Load a pretrained autoencoder from a file.
+        If sae_lens=True, then pass **kwargs to sae_lens's
+        loading function.
+        """
+        if not load_from_sae_lens:
+            state_dict = t.load(path, weights_only=True)
+            dict_size, activation_dim = state_dict["W_enc1"].shape
+            autoencoder = JumpReluCrossCoder2Models(activation_dim, dict_size)
+            autoencoder.load_state_dict(state_dict)
+        else:
+            raise NotImplementedError("SAE-Lens not yet supported")
+        if device is not None:
+            device = autoencoder.W_enc1.device
+        return autoencoder.to(dtype=dtype, device=device)
