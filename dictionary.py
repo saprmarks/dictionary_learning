@@ -374,6 +374,50 @@ class AutoEncoderNew(Dictionary, nn.Module):
         return autoencoder
 
 
+class CrossCoderEncoder(nn.Module):
+    """
+    A cross-coder encoder
+    """
+
+    def __init__(self, activation_dim, dict_size, num_layers):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.num_layers = num_layers
+        self.weight = nn.Parameter(
+            init.kaiming_uniform_(th.empty(num_layers, activation_dim, dict_size))
+        )
+        self.bias = nn.Parameter(th.zeros(num_layers, dict_size))
+
+    def forward(
+        self, x: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # x: (batch_size, n_layers, activation_dim)
+        return nn.ReLU()(th.einsum("bld, ldD -> bD", x, self.weight) + self.bias)
+
+
+class CrossCoderDecoder(nn.Module):
+    """
+    A cross-coder decoder
+    """
+
+    def __init__(self, activation_dim, dict_size, num_layers):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.num_layers = num_layers
+        self.weight = nn.Parameter(
+            init.kaiming_uniform_(th.empty(num_layers, dict_size, activation_dim))
+        )
+        self.bias = nn.Parameter(th.zeros(num_layers, activation_dim))
+
+    def forward(
+        self, f: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # f: (batch_size, n_layers, dict_size)
+        return nn.ReLU()(th.einsum("blD, lDd -> bld", f, self.weight) + self.bias)
+
+
 class CrossCoder(Dictionary, nn.Module):
     """
     A cross-coder using the AutoEncoderNew architecture for two models.
@@ -387,34 +431,35 @@ class CrossCoder(Dictionary, nn.Module):
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
-        
-        self.encoder = nn.Parameter(th.empty(num_layers, activation_dim, dict_size))
-        self.decoder = nn.Parameter(th.empty(num_layers, dict_size, activation_dim))
-        init.kaiming_uniform_(self.encoder)
 
-    def encode(self, x: th.Tensor):
+        self.encoder = CrossCoderEncoder(activation_dim, dict_size, num_layers)
+        self.decoder = CrossCoderDecoder(activation_dim, dict_size, num_layers)
+
+    def encode(self, x: th.Tensor) -> th.Tensor:  # (batch_size, n_layers, dict_size)
         # x: (batch_size, n_layers, activation_dim)
-        
-        return nn.ReLU()(self.encoder1(x1)), nn.ReLU()(self.encoder2(x2))
+        return self.encoder(x)
 
-    def decode(self, f: tuple[th.Tensor, th.Tensor]):
-        f1, f2 = f
-        return self.decoder1(f1), self.decoder2(f2)
+    def decode(
+        self, f: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # f: (batch_size, n_layers, dict_size)
+        return self.decoder(f)
 
-    def forward(self, x: tuple[th.Tensor, th.Tensor], output_features=False):
+    def forward(self, x: th.Tensor, output_features=False):
         """
         Forward pass of the cross-coder.
-        x : tuple of activations to be encoded and decoded
+        x : activations to be encoded and decoded
         output_features : if True, return the encoded features as well as the decoded x
         """
         f = self.encode(x)
         x_hat = self.decode(f)
-        
+
         if output_features:
             # Scale features by decoder column norms
-            f1_scaled = f[0] * self.decoder1.weight.norm(dim=0, keepdim=True)
-            f2_scaled = f[1] * self.decoder2.weight.norm(dim=0, keepdim=True)
-            return x_hat, (f1_scaled, f2_scaled)
+            f_scaled = f * self.decoder.weight.norm(dim=2, keepdim=True).sum(
+                dim=0, keepdim=True
+            )  # Also sum across layers for the loss
+            return x_hat, f_scaled
         else:
             return x_hat
 
@@ -428,12 +473,11 @@ class CrossCoder(Dictionary, nn.Module):
         """
         Load a pretrained cross-coder from a file.
         """
-        state_dict = th.load(path, map_location='cpu')
+        state_dict = th.load(path, map_location="cpu")
         dict_size, activation_dim = state_dict["encoder1.weight"].shape
         cross_coder = cls(activation_dim, dict_size)
         cross_coder.load_state_dict(state_dict)
-        
+
         if device is not None:
             cross_coder = cross_coder.to(device)
         return cross_coder.to(dtype=dtype)
-
