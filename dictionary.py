@@ -374,39 +374,27 @@ class AutoEncoderNew(Dictionary, nn.Module):
         return autoencoder
 
 
-class AutoEncoderNewCrossCoder2Models(Dictionary, nn.Module):
+class CrossCoder(Dictionary, nn.Module):
     """
     A cross-coder using the AutoEncoderNew architecture for two models.
+
+    encoder: shape (num_layers, activation_dim, dict_size)
+    decoder: shape (num_layers, dict_size, activation_dim)
     """
 
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, num_layers):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
+        self.num_layers = num_layers
         
-        # Model 1
-        self.encoder1 = nn.Linear(activation_dim, dict_size, bias=True)
-        self.decoder1 = nn.Linear(dict_size, activation_dim, bias=True)
+        self.encoder = nn.Parameter(th.empty(num_layers, activation_dim, dict_size))
+        self.decoder = nn.Parameter(th.empty(num_layers, dict_size, activation_dim))
+        init.kaiming_uniform_(self.encoder)
+
+    def encode(self, x: th.Tensor):
+        # x: (batch_size, n_layers, activation_dim)
         
-        # Model 2
-        self.encoder2 = nn.Linear(activation_dim, dict_size, bias=True)
-        self.decoder2 = nn.Linear(dict_size, activation_dim, bias=True)
-
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for encoder, decoder in [(self.encoder1, self.decoder1), (self.encoder2, self.decoder2)]:
-            w = th.randn(self.activation_dim, self.dict_size)
-            w = w / w.norm(dim=0, keepdim=True) * 0.1
-            encoder.weight = nn.Parameter(w.clone().T)
-            decoder.weight = nn.Parameter(w.clone())
-
-            # initialize biases to zeros
-            init.zeros_(encoder.bias)
-            init.zeros_(decoder.bias)
-
-    def encode(self, x: tuple[th.Tensor, th.Tensor]):
-        x1, x2 = x
         return nn.ReLU()(self.encoder1(x1)), nn.ReLU()(self.encoder2(x2))
 
     def decode(self, f: tuple[th.Tensor, th.Tensor]):
