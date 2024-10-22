@@ -6,6 +6,7 @@ from abc import ABC, abstractclassmethod, abstractmethod
 import torch as th
 import torch.nn as nn
 import torch.nn.init as init
+from torch.nn.functional import relu
 
 
 class Dictionary(ABC, nn.Module):
@@ -393,7 +394,7 @@ class CrossCoderEncoder(nn.Module):
         self, x: th.Tensor
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # x: (batch_size, n_layers, activation_dim)
-        return nn.ReLU()(th.einsum("bld, ldD -> bD", x, self.weight) + self.bias)
+        return relu(th.einsum("bld, ldD -> blD", x, self.weight) + self.bias)
 
 
 class CrossCoderDecoder(nn.Module):
@@ -415,7 +416,7 @@ class CrossCoderDecoder(nn.Module):
         self, f: th.Tensor
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # f: (batch_size, n_layers, dict_size)
-        return nn.ReLU()(th.einsum("blD, lDd -> bld", f, self.weight) + self.bias)
+        return relu(th.einsum("blD, lDd -> bld", f, self.weight) + self.bias)
 
 
 class CrossCoder(Dictionary, nn.Module):
@@ -474,8 +475,8 @@ class CrossCoder(Dictionary, nn.Module):
         Load a pretrained cross-coder from a file.
         """
         state_dict = th.load(path, map_location="cpu")
-        dict_size, activation_dim = state_dict["encoder1.weight"].shape
-        cross_coder = cls(activation_dim, dict_size)
+        num_layers, dict_size, activation_dim = state_dict["encoder.weight"].shape
+        cross_coder = cls(activation_dim, dict_size, num_layers)
         cross_coder.load_state_dict(state_dict)
 
         if device is not None:
