@@ -7,7 +7,6 @@ from typing import Tuple, List
 import numpy as np
 import os
 from tqdm.auto import tqdm
-from loguru import logger
 import json
 
 from .config import DEBUG
@@ -57,7 +56,7 @@ class ActivationCache:
     def collate_store_shards(store_dirs : Tuple[str], shard_count : int, activation_cache : List[th.Tensor], submodule_names : Tuple[str], shuffle_shards : bool = True, io : str = "out"):
         for i, name in enumerate(submodule_names):
                 activations = th.cat(activation_cache[i], dim=0) # (N x B x T) x D (N = number of batches per shard)
-                logger.info(f"Storing activation shard ({activations.shape}) for {name} {io}")
+                print(f"Storing activation shard ({activations.shape}) for {name} {io}")
                 if shuffle_shards:
                     idx = np.random.permutation(activations.shape[0])
                     activations = activations[idx]
@@ -125,7 +124,7 @@ class ActivationCache:
                 activation_cache = [[] for _ in submodules]
 
             if total_size > max_total_tokens:
-                logger.info(f"Max total tokens reached. Stopping collection.")
+                print(f"Max total tokens reached. Stopping collection.")
                 break
 
         if current_size > 0:
@@ -135,7 +134,7 @@ class ActivationCache:
         for i, store_dir in enumerate(store_dirs):
             with open(os.path.join(store_dir, "config.json"), "w") as f:
                 json.dump({"batch_size" : batch_size, "context_len" : context_len, "shard_size" : shard_size, "d_model" : d_model, "shuffle_shards" : shuffle_shards, "io" : io, "total_size" : total_size, "shard_count" : shard_count}, f)
-        logger.info(f"Finished collecting activations. Total size: {total_size}")
+        print(f"Finished collecting activations. Total size: {total_size}")
 
 
 class PairedActivationCache:

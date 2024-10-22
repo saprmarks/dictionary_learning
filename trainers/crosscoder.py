@@ -1,19 +1,18 @@
 """
 Implements the standard SAE training scheme.
 """
-import torch as t
+import torch as th
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
-from ..dictionary import AutoEncoder
+from ..dictionary import CrossCoder
 from collections import namedtuple
-
 
 class CrossCoderTrainer(SAETrainer):
     """
-    Standard SAE training scheme.
+    Standard SAE training scheme for cross-coding.
     """
     def __init__(self,
-                 dict_class=AutoEncoder,
+                 dict_class=CrossCoder,
                  activation_dim=512,
                  dict_size=64*512,
                  lr=1e-3, 
@@ -35,8 +34,8 @@ class CrossCoderTrainer(SAETrainer):
         self.submodule_name = submodule_name
 
         if seed is not None:
-            t.manual_seed(seed)
-            t.cuda.manual_seed_all(seed)
+            th.manual_seed(seed)
+            th.cuda.manual_seed_all(seed)
 
         # initialize dictionary
         self.ae = dict_class(activation_dim, dict_size)
@@ -47,31 +46,30 @@ class CrossCoderTrainer(SAETrainer):
         self.wandb_name = wandb_name
 
         if device is None:
-            self.device = 'cuda' if t.cuda.is_available() else 'cpu'
+            self.device = 'cuda' if th.cuda.is_available() else 'cpu'
         else:
             self.device = device
         self.ae.to(self.device)
 
         self.resample_steps = resample_steps
 
-
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
-            self.steps_since_active = t.zeros(self.ae.dict_size, dtype=int).to(self.device)
+            self.steps_since_active = th.zeros(self.ae.dict_size, dtype=int).to(self.device)
         else:
             self.steps_since_active = None 
 
-        self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
+        self.optimizer = th.optim.Adam(self.ae.parameters(), lr=lr)
         if resample_steps is None:
             def warmup_fn(step):
                 return min(step / warmup_steps, 1.)
         else:
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
-        self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
+        self.scheduler = th.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
 
     def resample_neurons(self, deads, activations):
-        with t.no_grad():
+        with th.no_grad():
             if deads.sum() == 0: return
             print(f"resampling {deads.sum().item()} neurons")
 
@@ -80,7 +78,7 @@ class CrossCoderTrainer(SAETrainer):
 
             # sample input to create encoder/decoder weights from
             n_resample = min([deads.sum(), losses.shape[0]])
-            indices = t.multinomial(losses, num_samples=n_resample, replacement=False)
+            indices = th.multinomial(losses, num_samples=n_resample, replacement=False)
             sampled_vecs = activations[indices]
 
             # get norm of the living neurons
@@ -107,7 +105,7 @@ class CrossCoderTrainer(SAETrainer):
     
     def loss(self, x, logging=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)
-        l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
+        l2_loss = th.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
 
         if self.steps_since_active is not None:
