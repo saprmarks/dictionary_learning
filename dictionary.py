@@ -472,8 +472,8 @@ class CrossCoder(Dictionary, nn.Module):
         """
         Load a pretrained cross-coder from a file.
         """
-        state_dict = th.load(path, map_location="cpu")
-        num_layers, dict_size, activation_dim = state_dict["encoder.weight"].shape
+        state_dict = th.load(path, map_location="cpu", weights_only=True)
+        num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
         cross_coder = cls(activation_dim, dict_size, num_layers)
         cross_coder.load_state_dict(state_dict)
 
