@@ -374,59 +374,92 @@ class AutoEncoderNew(Dictionary, nn.Module):
         return autoencoder
 
 
-class AutoEncoderNewCrossCoder2Models(Dictionary, nn.Module):
+class CrossCoderEncoder(nn.Module):
     """
-    A cross-coder using the AutoEncoderNew architecture for two models.
+    A cross-coder encoder
     """
 
-    def __init__(self, activation_dim, dict_size):
+    def __init__(self, activation_dim, dict_size, num_layers):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        
-        # Model 1
-        self.encoder1 = nn.Linear(activation_dim, dict_size, bias=True)
-        self.decoder1 = nn.Linear(dict_size, activation_dim, bias=True)
-        
-        # Model 2
-        self.encoder2 = nn.Linear(activation_dim, dict_size, bias=True)
-        self.decoder2 = nn.Linear(dict_size, activation_dim, bias=True)
+        self.num_layers = num_layers
+        self.weight = nn.Parameter(
+            init.kaiming_uniform_(th.empty(num_layers, activation_dim, dict_size))
+        )
+        self.bias = nn.Parameter(th.zeros(num_layers, dict_size))
 
-        self._initialize_weights()
+    def forward(
+        self, x: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # x: (batch_size, n_layers, activation_dim)
+        return nn.ReLU()(th.einsum("bld, ldD -> bD", x, self.weight) + self.bias)
 
-    def _initialize_weights(self):
-        for encoder, decoder in [(self.encoder1, self.decoder1), (self.encoder2, self.decoder2)]:
-            w = th.randn(self.activation_dim, self.dict_size)
-            w = w / w.norm(dim=0, keepdim=True) * 0.1
-            encoder.weight = nn.Parameter(w.clone().T)
-            decoder.weight = nn.Parameter(w.clone())
 
-            # initialize biases to zeros
-            init.zeros_(encoder.bias)
-            init.zeros_(decoder.bias)
+class CrossCoderDecoder(nn.Module):
+    """
+    A cross-coder decoder
+    """
 
-    def encode(self, x: tuple[th.Tensor, th.Tensor]):
-        x1, x2 = x
-        return nn.ReLU()(self.encoder1(x1)), nn.ReLU()(self.encoder2(x2))
+    def __init__(self, activation_dim, dict_size, num_layers):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.num_layers = num_layers
+        self.weight = nn.Parameter(
+            init.kaiming_uniform_(th.empty(num_layers, dict_size, activation_dim))
+        )
+        self.bias = nn.Parameter(th.zeros(num_layers, activation_dim))
 
-    def decode(self, f: tuple[th.Tensor, th.Tensor]):
-        f1, f2 = f
-        return self.decoder1(f1), self.decoder2(f2)
+    def forward(
+        self, f: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # f: (batch_size, n_layers, dict_size)
+        return nn.ReLU()(th.einsum("blD, lDd -> bld", f, self.weight) + self.bias)
 
-    def forward(self, x: tuple[th.Tensor, th.Tensor], output_features=False):
+
+class CrossCoder(Dictionary, nn.Module):
+    """
+    A cross-coder using the AutoEncoderNew architecture for two models.
+
+    encoder: shape (num_layers, activation_dim, dict_size)
+    decoder: shape (num_layers, dict_size, activation_dim)
+    """
+
+    def __init__(self, activation_dim, dict_size, num_layers):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.num_layers = num_layers
+
+        self.encoder = CrossCoderEncoder(activation_dim, dict_size, num_layers)
+        self.decoder = CrossCoderDecoder(activation_dim, dict_size, num_layers)
+
+    def encode(self, x: th.Tensor) -> th.Tensor:  # (batch_size, n_layers, dict_size)
+        # x: (batch_size, n_layers, activation_dim)
+        return self.encoder(x)
+
+    def decode(
+        self, f: th.Tensor
+    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
+        # f: (batch_size, n_layers, dict_size)
+        return self.decoder(f)
+
+    def forward(self, x: th.Tensor, output_features=False):
         """
         Forward pass of the cross-coder.
-        x : tuple of activations to be encoded and decoded
+        x : activations to be encoded and decoded
         output_features : if True, return the encoded features as well as the decoded x
         """
         f = self.encode(x)
         x_hat = self.decode(f)
-        
+
         if output_features:
             # Scale features by decoder column norms
-            f1_scaled = f[0] * self.decoder1.weight.norm(dim=0, keepdim=True)
-            f2_scaled = f[1] * self.decoder2.weight.norm(dim=0, keepdim=True)
-            return x_hat, (f1_scaled, f2_scaled)
+            f_scaled = f * self.decoder.weight.norm(dim=2, keepdim=True).sum(
+                dim=0, keepdim=True
+            )  # Also sum across layers for the loss
+            return x_hat, f_scaled
         else:
             return x_hat
 
@@ -440,12 +473,11 @@ class AutoEncoderNewCrossCoder2Models(Dictionary, nn.Module):
         """
         Load a pretrained cross-coder from a file.
         """
-        state_dict = th.load(path, map_location='cpu')
+        state_dict = th.load(path, map_location="cpu")
         dict_size, activation_dim = state_dict["encoder1.weight"].shape
         cross_coder = cls(activation_dim, dict_size)
         cross_coder.load_state_dict(state_dict)
-        
+
         if device is not None:
             cross_coder = cross_coder.to(device)
         return cross_coder.to(dtype=dtype)
-
