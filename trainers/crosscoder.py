@@ -13,6 +13,7 @@ class CrossCoderTrainer(SAETrainer):
     """
     def __init__(self,
                  dict_class=CrossCoder,
+                 num_layers=2,
                  activation_dim=512,
                  dict_size=64*512,
                  lr=1e-3, 
@@ -38,7 +39,7 @@ class CrossCoderTrainer(SAETrainer):
             th.cuda.manual_seed_all(seed)
 
         # initialize dictionary
-        self.ae = dict_class(activation_dim, dict_size)
+        self.ae = dict_class(activation_dim, dict_size, num_layers=num_layers)
 
         self.lr = lr
         self.l1_penalty=l1_penalty

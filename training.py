@@ -30,6 +30,28 @@ def new_wandb_process(config, log_queue, entity, project):
     wandb.finish()
 
 
+def get_stats(
+    trainer,
+    act: t.Tensor,
+):
+    with t.no_grad():
+        act, act_hat, f, losslog = trainer.loss(act, step=0, logging=True)
+
+    # L0
+    l0 = (f != 0).float()
+
+    # fraction of variance explained
+    total_variance = t.var(act, dim=0)
+    residual_variance = t.var(act - act_hat, dim=0)
+
+    return {
+        "l0": l0,
+        "total_variance": total_variance,
+        "residual_variance": residual_variance,
+        **{f"{k}": v for k, v in losslog.items()},
+    }
+
+
 def log_stats(
     trainers,
     step: int,
@@ -37,6 +59,7 @@ def log_stats(
     activations_split_by_head: bool,
     transcoder: bool,
     log_queues: list=[],
+    stage: str="train",
 ):
     with t.no_grad():
         # quick hack to make sure all trainers get the same x
@@ -55,7 +78,7 @@ def log_stats(
                 total_variance = t.var(act, dim=0).sum()
                 residual_variance = t.var(act - act_hat, dim=0).sum()
                 frac_variance_explained = 1 - residual_variance / total_variance
-                log[f"frac_variance_explained"] = frac_variance_explained.item()
+                log[f"{stage}/frac_variance_explained"] = frac_variance_explained.item()
             else:  # transcoder
                 x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True)
 
@@ -63,15 +86,40 @@ def log_stats(
                 l0 = (f != 0).float().sum(dim=-1).mean().item()
 
             # log parameters from training
-            log.update({f"{k}": v for k, v in losslog.items()})
-            log[f"l0"] = l0
+            log.update({f"{stage}/{k}": v for k, v in losslog.items()})
+            log[f"{stage}/l0"] = l0
             trainer_log = trainer.get_logging_parameters()
             for name, value in trainer_log.items():
-                log[f"{name}"] = value
+                log[f"{stage}/{name}"] = value
 
             if log_queues:
                 log_queues[i].put(log)
 
+@t.no_grad()
+def run_validation(
+    trainers,
+    validation_data,
+    activations_split_by_head: bool,
+    transcoder: bool,
+    log_queues: list=[],
+):
+    for i, trainer in enumerate(trainers):
+        f0 = []
+        total_variance = []
+        residual_variance = []
+        for val_step, act in enumerate(tqdm(validation_data, total=len(validation_data))):
+            act = act.to(trainer.device)
+            stats = get_stats(trainer, act)
+            f0.append(stats["l0"])
+            total_variance.append(stats["total_variance"])
+            residual_variance.append(stats["residual_variance"])
+        
+        log = {}
+        log["val/f0"] = t.cat(f0).sum(dim=-1).mean().item()
+        log["val/frac_variance_explained"] = 1 - t.cat(residual_variance).sum() / t.cat(total_variance).sum()
+
+        if log_queues:
+            log_queues[i].put(log)
 
 def trainSAE(
     data,
@@ -84,12 +132,16 @@ def trainSAE(
     save_dir=None,
     log_steps=None,
     activations_split_by_head=False,
+    validate_every_n_steps=None,
+    validation_data=None,
     transcoder=False,
     run_cfg={},
 ):
     """
     Train SAEs using the given trainers
     """
+    assert not(validation_data is None and validate_every_n_steps is not None), "Must provide validation data if validate_every_n_steps is not None"
+
     trainers = []
     for config in trainer_configs:
         trainer_class = config["trainer"]
@@ -132,6 +184,7 @@ def trainSAE(
     for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
+        act = act.to(trainers[0].device)
 
         # logging
         if log_steps is not None and step % log_steps == 0:
@@ -153,6 +206,14 @@ def trainSAE(
         # training
         for trainer in trainers:
             trainer.update(step, act)
+
+        if validate_every_n_steps is not None and step % validate_every_n_steps == 0:
+            print(f"Validating at step {step}")
+            run_validation(trainers, validation_data, activations_split_by_head, transcoder, log_queues)
+
+    # Final validation
+    print(f"Validating at step {step}")
+    run_validation(trainers, validation_data, activations_split_by_head, transcoder, log_queues)
 
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):
