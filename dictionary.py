@@ -380,19 +380,41 @@ class CrossCoderEncoder(nn.Module):
     A cross-coder encoder
     """
 
-    def __init__(self, activation_dim, dict_size, num_layers):
+    def __init__(
+        self,
+        activation_dim,
+        dict_size,
+        num_layers,
+        same_init_for_all_layers: bool = False,
+        norm_init_scale: float | None = None,
+    ):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
-        self.weight = nn.Parameter(
-            init.kaiming_uniform_(th.empty(num_layers, activation_dim, dict_size))
-        )
-        self.bias = nn.Parameter(th.zeros(num_layers, dict_size))
+        if same_init_for_all_layers:
+            weight = init.kaiming_uniform_(th.empty(activation_dim, dict_size))
+            weight = weight.repeat(num_layers, 1, 1)
+        else:
+            weight = init.kaiming_uniform_(
+                th.empty(num_layers, activation_dim, dict_size)
+            )
+        if norm_init_scale is not None:
+            weight = weight / weight.norm(dim=1, keepdim=True) * norm_init_scale
+        self.weight = nn.Parameter(weight)
+        self.bias = nn.Parameter(th.zeros(dict_size))
 
     def forward(self, x: th.Tensor) -> th.Tensor:  # (batch_size, activation_dim)
-        # x: (batch_size, n_layers, activation_dim)
-        return relu(th.einsum("bld, ldD -> blD", x, self.weight) + self.bias).sum(dim=1)
+        """
+        Convert activations to features for each layer
+
+        Args:
+            x: (batch_size, n_layers, activation_dim)
+        Returns:
+            f: (batch_size, dict_size)
+        """
+        f = th.einsum("bld, ldD -> blD", x, self.weight).sum(dim=1)
+        return relu(f + self.bias)
 
 
 class CrossCoderDecoder(nn.Module):
@@ -400,21 +422,45 @@ class CrossCoderDecoder(nn.Module):
     A cross-coder decoder
     """
 
-    def __init__(self, activation_dim, dict_size, num_layers):
+    def __init__(
+        self,
+        activation_dim,
+        dict_size,
+        num_layers,
+        same_init_for_all_layers: bool = False,
+        norm_init_scale: float | None = None,
+    ):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
-        self.weight = nn.Parameter(
-            init.kaiming_uniform_(th.empty(num_layers, dict_size, activation_dim))
-        )
+        if same_init_for_all_layers:
+            weight = init.kaiming_uniform_(th.empty(dict_size, activation_dim))
+            weight = weight.repeat(num_layers, 1, 1)
+        else:
+            weight = init.kaiming_uniform_(
+                th.empty(num_layers, dict_size, activation_dim)
+            )
+        if norm_init_scale is not None:
+            raise NotImplementedError(
+                "Normalized initialization not implemented for crosscoder"
+            )
+        self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(num_layers, activation_dim))
 
     def forward(
         self, f: th.Tensor
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # f: (batch_size, n_layers, dict_size)
-        return relu(th.einsum("bD, lDd -> bld", f, self.weight) + self.bias)
+        """
+        Convert features to activations for each layer
+
+        Args:
+            f: (batch_size, dict_size)
+        Returns:
+            x: (batch_size, n_layers, activation_dim)
+        """
+        return th.einsum("bD, lDd -> bld", f, self.weight) + self.bias
 
 
 class CrossCoder(Dictionary, nn.Module):
@@ -425,14 +471,26 @@ class CrossCoder(Dictionary, nn.Module):
     decoder: shape (num_layers, dict_size, activation_dim)
     """
 
-    def __init__(self, activation_dim, dict_size, num_layers):
+    def __init__(
+        self, activation_dim, dict_size, num_layers, same_init_for_all_layers=False
+    ):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
 
-        self.encoder = CrossCoderEncoder(activation_dim, dict_size, num_layers)
-        self.decoder = CrossCoderDecoder(activation_dim, dict_size, num_layers)
+        self.encoder = CrossCoderEncoder(
+            activation_dim,
+            dict_size,
+            num_layers,
+            same_init_for_all_layers=same_init_for_all_layers,
+        )
+        self.decoder = CrossCoderDecoder(
+            activation_dim,
+            dict_size,
+            num_layers,
+            same_init_for_all_layers=same_init_for_all_layers,
+        )
 
     def encode(self, x: th.Tensor) -> th.Tensor:  # (batch_size, n_layers, dict_size)
         # x: (batch_size, n_layers, activation_dim)
