@@ -485,6 +485,12 @@ class CrossCoder(Dictionary, nn.Module):
         norm_init_scale: float | None = None,  # neel's default: 0.005
         init_with_transpose=True,
     ):
+        """
+        Args:
+            same_init_for_all_layers: if True, initialize all layers with the same vector
+            norm_init_scale: if not None, initialize the weights with a norm of this value
+            init_with_transpose: if True, initialize the decoder weights with the transpose of the encoder weights
+        """
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
