@@ -7,6 +7,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.init as init
 from torch.nn.functional import relu
+import einops
 
 
 class Dictionary(ABC, nn.Module):
@@ -429,24 +430,28 @@ class CrossCoderDecoder(nn.Module):
         num_layers,
         same_init_for_all_layers: bool = False,
         norm_init_scale: float | None = None,
+        init_with_weight: th.Tensor | None = None,
     ):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
-        if same_init_for_all_layers:
-            weight = init.kaiming_uniform_(th.empty(dict_size, activation_dim))
-            weight = weight.repeat(num_layers, 1, 1)
-        else:
-            weight = init.kaiming_uniform_(
-                th.empty(num_layers, dict_size, activation_dim)
-            )
-        if norm_init_scale is not None:
-            raise NotImplementedError(
-                "Normalized initialization not implemented for crosscoder"
-            )
-        self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(num_layers, activation_dim))
+        if init_with_weight is not None:
+            self.weight = nn.Parameter(init_with_weight)
+        else:
+            if same_init_for_all_layers:
+                weight = init.kaiming_uniform_(th.empty(dict_size, activation_dim))
+                weight = weight.repeat(num_layers, 1, 1)
+            else:
+                weight = init.kaiming_uniform_(
+                    th.empty(num_layers, dict_size, activation_dim)
+                )
+            if norm_init_scale is not None:
+                raise NotImplementedError(
+                    "Normalized initialization not implemented for crosscoder"
+                )
+            self.weight = nn.Parameter(weight)
 
     def forward(
         self, f: th.Tensor
@@ -472,7 +477,13 @@ class CrossCoder(Dictionary, nn.Module):
     """
 
     def __init__(
-        self, activation_dim, dict_size, num_layers, same_init_for_all_layers=False
+        self,
+        activation_dim,
+        dict_size,
+        num_layers,
+        same_init_for_all_layers=False,
+        norm_init_scale: float | None = None,  # neel's default: 0.005
+        init_with_transpose=True,
     ):
         super().__init__()
         self.activation_dim = activation_dim
@@ -484,12 +495,22 @@ class CrossCoder(Dictionary, nn.Module):
             dict_size,
             num_layers,
             same_init_for_all_layers=same_init_for_all_layers,
+            norm_init_scale=norm_init_scale,
         )
+        if init_with_transpose:
+            decoder_weight = einops.rearrange(
+                self.encoder.weight.data.clone(),
+                "num_layers activation_dim dict_size -> num_layers dict_size activation_dim",
+            )
+        else:
+            decoder_weight = None
         self.decoder = CrossCoderDecoder(
             activation_dim,
             dict_size,
             num_layers,
             same_init_for_all_layers=same_init_for_all_layers,
+            init_with_weight=decoder_weight,
+            norm_init_scale=norm_init_scale,
         )
 
     def encode(self, x: th.Tensor) -> th.Tensor:  # (batch_size, n_layers, dict_size)
