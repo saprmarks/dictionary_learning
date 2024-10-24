@@ -3,8 +3,19 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dictionary_learning"
-version = "0.1.0"
-description = "A package for dictionary learning algorithms"
+dynamic = ["version"]
+name = "dictionary_learning"description = "A package for dictionary learning via sparse autoencoders on neural network activations"
+readme = "README.md"
+keywords = ["dictionary learning", "sparse autoencoder", "neural networks"]
 
 license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch",
+    "nnsight",
+    "einops",
+]
