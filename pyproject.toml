@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
+[tool.setuptools_scm]
 
 [project]
 dynamic = ["version"]
-name = "dictionary_learning"description = "A package for dictionary learning via sparse autoencoders on neural network activations"
+name "A package for dictionary learning via sparse autoencoders on neural network activations"
 readme = "README.md"
 keywords = ["dictionary learning", "sparse autoencoder", "neural networks"]
 
