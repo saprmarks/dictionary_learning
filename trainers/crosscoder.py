@@ -24,8 +24,10 @@ class CrossCoderTrainer(SAETrainer):
                  device=None,
                  layer=None,
                  lm_name=None,
-                 wandb_name='StandardTrainer',
+                 wandb_name='CrossCoderTrainer',
                  submodule_name=None,
+                 compile=False,
+                 dict_class_kwargs={}
     ):
         super().__init__(seed)
 
@@ -33,14 +35,15 @@ class CrossCoderTrainer(SAETrainer):
         self.layer = layer
         self.lm_name = lm_name
         self.submodule_name = submodule_name
-
+        self.compile = compile
         if seed is not None:
             th.manual_seed(seed)
             th.cuda.manual_seed_all(seed)
 
         # initialize dictionary
-        self.ae = dict_class(activation_dim, dict_size, num_layers=num_layers)
-
+        self.ae = dict_class(activation_dim, dict_size, num_layers=num_layers, **dict_class_kwargs)
+        if compile:
+            self.ae = th.compile(self.ae)
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
@@ -104,14 +107,14 @@ class CrossCoderTrainer(SAETrainer):
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
     
-    def loss(self, x, logging=False, **kwargs):
+    def loss(self, x, logging=False, return_deads=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = th.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
+        deads = (f == 0).all(dim=0)
 
         if self.steps_since_active is not None:
             # update steps_since_active
-            deads = (f == 0).all(dim=0)
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
@@ -126,7 +129,8 @@ class CrossCoderTrainer(SAETrainer):
                     'l2_loss' : l2_loss.item(),
                     'mse_loss' : (x - x_hat).pow(2).sum(dim=-1).mean().item(),
                     'sparsity_loss' : l1_loss.item(),
-                    'loss' : loss.item()
+                    'loss' : loss.item(),
+                    'deads' : deads if return_deads else None
                 }
             )
 
@@ -146,8 +150,8 @@ class CrossCoderTrainer(SAETrainer):
     @property
     def config(self):
         return {
-            'dict_class': 'AutoEncoder',
-            'trainer_class' : 'StandardTrainer',
+            'dict_class': self.ae.__class__.__name__ if not self.compile else self.ae._orig_mod.__class__.__name__,
+            'trainer_class' : self.__class__.__name__,
             'activation_dim': self.ae.activation_dim,
             'dict_size': self.ae.dict_size,
             'lr' : self.lr,

@@ -45,6 +45,7 @@ class StandardTrainer(SAETrainer):
                  lm_name=None,
                  wandb_name='StandardTrainer',
                  submodule_name=None,
+                 compile=False,
     ):
         super().__init__(seed)
 
@@ -59,7 +60,8 @@ class StandardTrainer(SAETrainer):
 
         # initialize dictionary
         self.ae = dict_class(activation_dim, dict_size)
-
+        if compile:
+            self.ae = t.compile(self.ae)
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
