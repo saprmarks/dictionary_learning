@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 dynamic = ["version"]
-name = "A package for dictionary learning via sparse autoencoders on neural network activations"
+name = "dictionary_learning"
+description = "A package for dictionary learning via sparse autoencoders on neural network activations"
 readme = "README.md"
 keywords = ["dictionary learning", "sparse autoencoder", "neural networks"]
 
