@@ -417,9 +417,7 @@ class CrossCoderEncoder(nn.Module):
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(dict_size))
 
-    def forward(
-        self, x: th.Tensor, no_sum: bool = False
-    ) -> th.Tensor:  # (batch_size, activation_dim)
+    def forward(self, x: th.Tensor, return_no_sum: bool = False) -> th.Tensor:  # (batch_size, activation_dim)
         """
         Convert activations to features for each layer
 
@@ -430,9 +428,10 @@ class CrossCoderEncoder(nn.Module):
         """
         x = x[:, self.encoder_layers]
         f = th.einsum("bld, ldD -> blD", x, self.weight)
-        if not no_sum:
-            f = f.sum(dim=1)
-        return relu(f + self.bias)
+        if not return_no_sum:
+            return relu(f.sum(dim=1) + self.bias)
+        else:
+            return relu(f.sum(dim=1) + self.bias), relu(f + self.bias)
 
 
 class CrossCoderDecoder(nn.Module):
