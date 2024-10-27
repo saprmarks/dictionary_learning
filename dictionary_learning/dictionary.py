@@ -389,8 +389,15 @@ class CrossCoderEncoder(nn.Module):
         num_layers,
         same_init_for_all_layers: bool = False,
         norm_init_scale: float | None = None,
+        encoder_layers: list[int] | None = None,
     ):
         super().__init__()
+        
+        if encoder_layers is None:
+            self.encoder_layers = list(range(num_layers))
+        else:
+            num_layers = len(encoder_layers)
+        self.encoder_layers = encoder_layers
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
@@ -406,7 +413,7 @@ class CrossCoderEncoder(nn.Module):
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(dict_size))
 
-    def forward(self, x: th.Tensor) -> th.Tensor:  # (batch_size, activation_dim)
+    def forward(self, x: th.Tensor, no_sum: bool = False) -> th.Tensor:  # (batch_size, activation_dim)
         """
         Convert activations to features for each layer
 
@@ -415,9 +422,11 @@ class CrossCoderEncoder(nn.Module):
         Returns:
             f: (batch_size, dict_size)
         """
-        f = th.einsum("bld, ldD -> blD", x, self.weight).sum(dim=1)
+        x = x[:, self.encoder_layers]
+        f = th.einsum("bld, ldD -> blD", x, self.weight)
+        if not no_sum:
+            f = f.sum(dim=1)
         return relu(f + self.bias)
-
 
 class CrossCoderDecoder(nn.Module):
     """
@@ -483,6 +492,7 @@ class CrossCoder(Dictionary, nn.Module):
         same_init_for_all_layers=False,
         norm_init_scale: float | None = None,  # neel's default: 0.005
         init_with_transpose=True,
+        encoder_layers: list[int] | None = None,
     ):
         """
         Args:
@@ -501,6 +511,7 @@ class CrossCoder(Dictionary, nn.Module):
             num_layers,
             same_init_for_all_layers=same_init_for_all_layers,
             norm_init_scale=norm_init_scale,
+            encoder_layers=encoder_layers,
         )
         if init_with_transpose:
             decoder_weight = einops.rearrange(
@@ -518,9 +529,9 @@ class CrossCoder(Dictionary, nn.Module):
             norm_init_scale=norm_init_scale,
         )
 
-    def encode(self, x: th.Tensor) -> th.Tensor:  # (batch_size, n_layers, dict_size)
+    def encode(self, x: th.Tensor, **kwargs) -> th.Tensor:  # (batch_size, n_layers, dict_size)
         # x: (batch_size, n_layers, activation_dim)
-        return self.encoder(x)
+        return self.encoder(x, **kwargs)
 
     def decode(
         self, f: th.Tensor
@@ -567,3 +578,30 @@ class CrossCoder(Dictionary, nn.Module):
         if device is not None:
             cross_coder = cross_coder.to(device)
         return cross_coder.to(dtype=dtype)
+
+
+    def resample_neurons(self, deads, activations):
+        # https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling
+        # compute loss for each activation
+        losses = (activations - self.forward(activations)).norm(dim=-1).mean(dim=-1).square()
+
+        # sample input to create encoder/decoder weights from
+        n_resample = min([deads.sum(), losses.shape[0]])
+        print("Resampling", n_resample, "neurons")
+        indices = th.multinomial(losses, num_samples=n_resample, replacement=False)
+        sampled_vecs = activations[indices] # (n_resample, num_layers, activation_dim)
+
+        # get norm of the living neurons
+        # encoder.weight: (num_layers, activation_dim, dict_size)
+        # decoder.weight: (num_layers, dict_size, activation_dim)
+        alive_norm = self.encoder.weight[:, :, ~deads].norm(dim=-2)
+        alive_norm = alive_norm.mean(dim=-1) # (num_layers)
+        # convert to (num_layers, 1, 1)
+        alive_norm = einops.repeat(alive_norm, "num_layers -> num_layers 1 1")
+
+        # resample first n_resample dead neurons
+        deads[deads.nonzero()[n_resample:]] = False
+        self.encoder.weight[:, :, deads] = (sampled_vecs.permute(1, 2, 0) * alive_norm * 0.05)
+        sampled_vecs = sampled_vecs.permute(1, 0, 2)
+        self.decoder.weight[:, deads, :] = th.nn.functional.normalize(sampled_vecs, dim=-1)
+        self.encoder.bias[deads] = 0.

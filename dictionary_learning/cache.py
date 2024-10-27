@@ -148,3 +148,17 @@ class PairedActivationCache:
     
     def __getitem__(self, index : int):
         return th.stack((self.activation_cache_1[index], self.activation_cache_2[index]), dim=0)
+
+
+class ActivationCacheTuple:
+    def __init__(self, *store_dirs : str):
+        self.activation_caches = [ActivationCache(store_dir) for store_dir in store_dirs]
+        assert len(self.activation_caches) > 0
+        for i in range(1, len(self.activation_caches)):
+            assert len(self.activation_caches[i]) == len(self.activation_caches[0])
+
+    def __len__(self):
+        return len(self.activation_caches[0])
+    
+    def __getitem__(self, index : int):
+        return th.stack([cache[index] for cache in self.activation_caches], dim=0)

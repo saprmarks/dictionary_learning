@@ -3,9 +3,7 @@ Training dictionaries
 """
 
 import json
-import multiprocessing as mp
 import os
-from queue import Empty
 from collections import defaultdict
 import torch as t
 from tqdm import tqdm
@@ -16,19 +14,6 @@ from .dictionary import AutoEncoder
 from .evaluation import evaluate
 from .trainers.standard import StandardTrainer
 from .trainers.crosscoder import CrossCoderTrainer
-
-def new_wandb_process(config, log_queue, entity, project):
-    wandb.init(entity=entity, project=project, config=config, name=config["wandb_name"])
-    while True:
-        try:
-            log = log_queue.get(timeout=1)
-            if log == "DONE":
-                break
-            step = log.pop("step")
-            wandb.log(log, step=step)
-        except Empty:
-            continue
-    wandb.finish()
 
 def get_stats(
     trainer,
@@ -74,80 +59,69 @@ def get_stats(
     return out
 
 def log_stats(
-    trainers,
+    trainer,
     step: int,
     act: t.Tensor,
     activations_split_by_head: bool,
     transcoder: bool,
-    log_queues: list=[],
     stage: str="train",
 ):
     with t.no_grad():
-        # quick hack to make sure all trainers get the same x
-        z = act.clone()
-        for i, trainer in enumerate(trainers):
-            log = {}
-            act = z.clone()
-            if activations_split_by_head:  # x.shape: [batch, pos, n_heads, d_head]
-                act = act[..., i, :]
-            if not transcoder:
-                stats = get_stats(trainer, act)
-                log.update({f"{stage}/{k}": v for k, v in stats.items()})
+        log = {}
+        if activations_split_by_head:  # x.shape: [batch, pos, n_heads, d_head]
+            act = act[..., 0, :]
+        if not transcoder:
+            stats = get_stats(trainer, act)
+            log.update({f"{stage}/{k}": v for k, v in stats.items()})
+        else:  # transcoder
+            x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True)
+            # L0
+            l0 = (f != 0).float().sum(dim=-1).mean().item()
+            log[f"{stage}/l0"] = l0
 
-            else:  # transcoder
-                x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True)
+        # log parameters from training
+        log["step"] = step
+        trainer_log = trainer.get_logging_parameters()
+        for name, value in trainer_log.items():
+            log[f"{stage}/{name}"] = value
 
-                # L0
-                l0 = (f != 0).float().sum(dim=-1).mean().item()
-
-            # log parameters from training
-            log["step"] = step
-            trainer_log = trainer.get_logging_parameters()
-            for name, value in trainer_log.items():
-                log[f"{stage}/{name}"] = value
-
-            if log_queues:
-                log_queues[i].put(log)
+        wandb.log(log, step=step)
 
 @t.no_grad()
 def run_validation(
-    trainers,
+    trainer,
     validation_data,
-    log_queues: list=[],
     step: int=None,
 ):
-    for i, trainer in enumerate(trainers):
-        l0 = []
-        frac_variance_explained = []
-        deads = []
-        if isinstance(trainer, CrossCoderTrainer):
-            frac_variance_explained_per_layer = defaultdict(list)
-        for val_step, act in enumerate(tqdm(validation_data, total=len(validation_data))):
-            act = act.to(trainer.device)
-            stats = get_stats(trainer, act, deads_sum=False)
-            l0.append(stats["l0"])
-            deads.append(stats["frac_deads"])
-            frac_variance_explained.append(stats["frac_variance_explained"])
-            if isinstance(trainer, CrossCoderTrainer):
-                for l in range(act.shape[1]):
-                    frac_variance_explained_per_layer[l].append(stats[f"cl{l}_frac_variance_explained"])
-
-
-        log = {}
-        log["val/frac_deads"] = t.stack(deads).all(dim=0).float().mean().item()
-        log["val/l0"] = t.tensor(l0).mean().item()
-        log["val/frac_variance_explained"] = t.tensor(frac_variance_explained).mean()
+    l0 = []
+    frac_variance_explained = []
+    deads = []
+    if isinstance(trainer, CrossCoderTrainer):
+        frac_variance_explained_per_layer = defaultdict(list)
+    for val_step, act in enumerate(tqdm(validation_data, total=len(validation_data))):
+        act = act.to(trainer.device)
+        stats = get_stats(trainer, act, deads_sum=False)
+        l0.append(stats["l0"])
+        deads.append(stats["frac_deads"])
+        frac_variance_explained.append(stats["frac_variance_explained"])
         if isinstance(trainer, CrossCoderTrainer):
             for l in range(act.shape[1]):
-                log[f"val/cl{l}_frac_variance_explained"] = t.tensor(frac_variance_explained_per_layer[l]).mean()
-        if step is not None:
-            log["step"] = step
-        if log_queues:
-            log_queues[i].put(log)
+                frac_variance_explained_per_layer[l].append(stats[f"cl{l}_frac_variance_explained"])
+
+    log = {}
+    log["val/frac_deads"] = t.stack(deads).all(dim=0).float().mean().item()
+    log["val/l0"] = t.tensor(l0).mean().item()
+    log["val/frac_variance_explained"] = t.tensor(frac_variance_explained).mean()
+    if isinstance(trainer, CrossCoderTrainer):
+        for l in range(act.shape[1]):
+            log[f"val/cl{l}_frac_variance_explained"] = t.tensor(frac_variance_explained_per_layer[l]).mean()
+    if step is not None:
+        log["step"] = step
+    wandb.log(log, step=step)
 
 def trainSAE(
     data,
-    trainer_configs,
+    trainer_config,
     use_wandb=False,
     wandb_entity="",
     wandb_project="",
@@ -162,91 +136,65 @@ def trainSAE(
     run_cfg={},
 ):
     """
-    Train SAEs using the given trainers
+    Train SAE using the given trainer
     """
     assert not(validation_data is None and validate_every_n_steps is not None), "Must provide validation data if validate_every_n_steps is not None"
 
-    trainers = []
-    for config in trainer_configs:
-        trainer_class = config["trainer"]
-        del config["trainer"]
-        trainers.append(trainer_class(**config))
+    trainer_class = trainer_config["trainer"]
+    del trainer_config["trainer"]
+    trainer = trainer_class(**trainer_config)
 
-    wandb_processes = []
-    log_queues = []
+    wandb_config = trainer.config | run_cfg
+    wandb.init(entity=wandb_entity, project=wandb_project, config=wandb_config, name=wandb_config["wandb_name"], mode="disabled" if not use_wandb else "online")
 
-    if use_wandb:
-        for i, trainer in enumerate(trainers):
-            log_queue = mp.Queue()
-            log_queues.append(log_queue)
-            wandb_config = trainer.config | run_cfg
-            wandb_process = mp.Process(
-                target=new_wandb_process,
-                args=(wandb_config, log_queue, wandb_entity, wandb_project),
-            )
-            wandb_process.start()
-            wandb_processes.append(wandb_process)
-
-    # make save dirs, export config
+    # make save dir, export config
     if save_dir is not None:
-        save_dirs = [
-            os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))
-        ]
-        for trainer, dir in zip(trainers, save_dirs):
-            os.makedirs(dir, exist_ok=True)
-            # save config
-            config = {"trainer": trainer.config}
-            try:
-                config["buffer"] = data.config
-            except:
-                pass
-            with open(os.path.join(dir, "config.json"), "w") as f:
-                json.dump(config, f, indent=4)
-    else:
-        save_dirs = [None for _ in trainer_configs]
+        os.makedirs(save_dir, exist_ok=True)
+        # save config
+        config = {"trainer": trainer.config}
+        try:
+            config["buffer"] = data.config
+        except:
+            pass
+        with open(os.path.join(save_dir, "config.json"), "w") as f:
+            json.dump(config, f, indent=4)
 
     for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
-        act = act.to(trainers[0].device)
+        act = act.to(trainer.device)
 
         # logging
         if log_steps is not None and step % log_steps == 0 and step != 0:
             log_stats(
-                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues
+                trainer, step, act, activations_split_by_head, transcoder
             )
 
         # saving
         if save_steps is not None and step % save_steps == 0:
-            for dir, trainer in zip(save_dirs, trainers):
-                if dir is not None:
-                    os.makedirs(os.path.join(dir, trainer.config["wandb_name"].lower()), exist_ok=True)
-                    t.save(
-                        trainer.ae.state_dict() if not trainer_configs[i]["compile"] else trainer.ae._orig_mod.state_dict(),
-                        os.path.join(dir, trainer.config["wandb_name"].lower(), f"ae_{step}.pt"),
-                    )
+            if save_dir is not None:
+                os.makedirs(os.path.join(save_dir, trainer.config["wandb_name"].lower()), exist_ok=True)
+                t.save(
+                    trainer.ae.state_dict() if not trainer_config["compile"] else trainer.ae._orig_mod.state_dict(),
+                    os.path.join(save_dir, trainer.config["wandb_name"].lower(), f"ae_{step}.pt"),
+                )
 
         # training
-        for trainer in trainers:
-            trainer.update(step, act)
+        trainer.update(step, act)
 
         if validate_every_n_steps is not None and step % validate_every_n_steps == 0 and step != 0:
             print(f"Validating at step {step}")
-            run_validation(trainers, validation_data, log_queues, step=step)
+            run_validation(trainer, validation_data, step=step)
 
-    # Final validation
-    print(f"Validating at step {step}")
-    run_validation(trainers, validation_data, log_queues, step=step)
+    try:
+        run_validation(trainer, validation_data, step=step)
+    except Exception as e:
+        print(f"Error during final validation: {str(e)}")
 
-    # save final SAEs
-    for save_dir, trainer in zip(save_dirs, trainers):
-        if save_dir is not None:
-            os.makedirs(os.path.join(save_dir, trainer.config["wandb_name"].lower()), exist_ok=True)
-            t.save(trainer.ae.state_dict() if not trainer_configs[i]["compile"] else trainer.ae._orig_mod.state_dict(), os.path.join(save_dir, trainer.config["wandb_name"].lower(), f"ae_final.pt"))
+    # save final SAE
+    if save_dir is not None:
+        os.makedirs(os.path.join(save_dir, trainer.config["wandb_name"].lower()), exist_ok=True)
+        t.save(trainer.ae.state_dict() if not trainer_config["compile"] else trainer.ae._orig_mod.state_dict(), os.path.join(save_dir, trainer.config["wandb_name"].lower(), f"ae_final.pt"))
 
-    # Signal wandb processes to finish
     if use_wandb:
-        for queue in log_queues:
-            queue.put("DONE")
-        for process in wandb_processes:
-            process.join()
+        wandb.finish()

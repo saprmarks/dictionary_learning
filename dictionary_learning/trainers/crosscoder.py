@@ -27,7 +27,8 @@ class CrossCoderTrainer(SAETrainer):
                  wandb_name='CrossCoderTrainer',
                  submodule_name=None,
                  compile=False,
-                 dict_class_kwargs={}
+                 dict_class_kwargs={},
+                 pretrained_ae=None,
     ):
         super().__init__(seed)
 
@@ -41,7 +42,11 @@ class CrossCoderTrainer(SAETrainer):
             th.cuda.manual_seed_all(seed)
 
         # initialize dictionary
-        self.ae = dict_class(activation_dim, dict_size, num_layers=num_layers, **dict_class_kwargs)
+        if pretrained_ae is None:
+            self.ae = dict_class(activation_dim, dict_size, num_layers=num_layers, **dict_class_kwargs)
+        else:
+            self.ae = pretrained_ae
+            
         if compile:
             self.ae = th.compile(self.ae)
         self.lr = lr
@@ -75,44 +80,25 @@ class CrossCoderTrainer(SAETrainer):
     def resample_neurons(self, deads, activations):
         with th.no_grad():
             if deads.sum() == 0: return
-            print(f"resampling {deads.sum().item()} neurons")
-
-            # compute loss for each activation
-            losses = (activations - self.ae(activations)).norm(dim=-1)
-
-            # sample input to create encoder/decoder weights from
-            n_resample = min([deads.sum(), losses.shape[0]])
-            indices = th.multinomial(losses, num_samples=n_resample, replacement=False)
-            sampled_vecs = activations[indices]
-
-            # get norm of the living neurons
-            alive_norm = self.ae.encoder.weight[~deads].norm(dim=-1).mean()
-
-            # resample first n_resample dead neurons
-            deads[deads.nonzero()[n_resample:]] = False
-            self.ae.encoder.weight[deads] = sampled_vecs * alive_norm * 0.2
-            self.ae.decoder.weight[:,deads] = (sampled_vecs / sampled_vecs.norm(dim=-1, keepdim=True)).T
-            self.ae.encoder.bias[deads] = 0.
-
-
+            self.ae.resample_neurons(deads, activations)
             # reset Adam parameters for dead neurons
             state_dict = self.optimizer.state_dict()['state']
             ## encoder weight
+            state_dict[0]['exp_avg'][:, :, deads] = 0.
+            state_dict[0]['exp_avg_sq'][:, :, deads] = 0.
+            ## encoder bias
             state_dict[1]['exp_avg'][deads] = 0.
             state_dict[1]['exp_avg_sq'][deads] = 0.
-            ## encoder bias
-            state_dict[2]['exp_avg'][deads] = 0.
-            state_dict[2]['exp_avg_sq'][deads] = 0.
             ## decoder weight
-            state_dict[3]['exp_avg'][:,deads] = 0.
-            state_dict[3]['exp_avg_sq'][:,deads] = 0.
-    
+            state_dict[3]['exp_avg'][:, deads, :] = 0.
+            state_dict[3]['exp_avg_sq'][:, deads, :] = 0.
+
+
     def loss(self, x, logging=False, return_deads=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = th.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
-        deads = (f == 0).all(dim=0)
-
+        deads = (f <= 1e-8).all(dim=0)
         if self.steps_since_active is not None:
             # update steps_since_active
             self.steps_since_active[deads] += 1
