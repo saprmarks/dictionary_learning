@@ -417,7 +417,12 @@ class CrossCoderEncoder(nn.Module):
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(dict_size))
 
-    def forward(self, x: th.Tensor, return_no_sum: bool = False) -> th.Tensor:  # (batch_size, activation_dim)
+    def forward(
+        self,
+        x: th.Tensor,
+        return_no_sum: bool = False,
+        select_features: list[int] | None = None,
+    ) -> th.Tensor:  # (batch_size, activation_dim)
         """
         Convert activations to features for each layer
 
@@ -427,7 +432,11 @@ class CrossCoderEncoder(nn.Module):
             f: (batch_size, dict_size)
         """
         x = x[:, self.encoder_layers]
-        f = th.einsum("bld, ldD -> blD", x, self.weight)
+        if select_features is not None:
+            w = self.weight[:, :, select_features]
+        else:
+            w = self.weight
+        f = th.einsum("bld, ldf -> blf", x, w)
         if not return_no_sum:
             return relu(f.sum(dim=1) + self.bias)
         else:
@@ -468,7 +477,7 @@ class CrossCoderDecoder(nn.Module):
             self.weight = nn.Parameter(weight)
 
     def forward(
-        self, f: th.Tensor
+        self, f: th.Tensor, select_features: list[int] | None = None
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # f: (batch_size, n_layers, dict_size)
         """
@@ -479,7 +488,11 @@ class CrossCoderDecoder(nn.Module):
         Returns:
             x: (batch_size, n_layers, activation_dim)
         """
-        return th.einsum("bD, lDd -> bld", f, self.weight) + self.bias
+        if select_features is not None:
+            w = self.weight[:, select_features]
+        else:
+            w = self.weight
+        return th.einsum("bf, lfd -> bld", f, w) + self.bias
 
 
 class CrossCoder(Dictionary, nn.Module):
@@ -541,15 +554,21 @@ class CrossCoder(Dictionary, nn.Module):
         # x: (batch_size, n_layers, activation_dim)
         return self.encoder(x, **kwargs)
 
-    def get_activation(self, x: th.Tensor) -> th.Tensor:
-        f = self.encode(x)
-        return f * self.decoder.weight.norm(dim=2).sum(dim=0, keepdim=True)
+    def get_activation(
+        self, x: th.Tensor, select_features: list[int] | None = None, **kwargs
+    ) -> th.Tensor:
+        f = self.encode(x, select_features=select_features, **kwargs)
+        if select_features is not None:
+            dw = self.decoder.weight[:, select_features]
+        else:
+            dw = self.decoder.weight
+        return f * dw.norm(dim=2).sum(dim=0, keepdim=True)
 
     def decode(
-        self, f: th.Tensor
+        self, f: th.Tensor, **kwargs
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
         # f: (batch_size, n_layers, dict_size)
-        return self.decoder(f)
+        return self.decoder(f, **kwargs)
 
     def forward(self, x: th.Tensor, output_features=False):
         """
