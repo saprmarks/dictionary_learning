@@ -434,13 +434,15 @@ class CrossCoderEncoder(nn.Module):
         x = x[:, self.encoder_layers]
         if select_features is not None:
             w = self.weight[:, :, select_features]
+            bias = self.bias[select_features]
         else:
             w = self.weight
+            bias = self.bias
         f = th.einsum("bld, ldf -> blf", x, w)
         if not return_no_sum:
-            return relu(f.sum(dim=1) + self.bias)
+            return relu(f.sum(dim=1) + bias)
         else:
-            return relu(f.sum(dim=1) + self.bias), relu(f + self.bias)
+            return relu(f.sum(dim=1) + bias), relu(f + bias)
 
 
 class CrossCoderDecoder(nn.Module):
