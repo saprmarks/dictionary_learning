@@ -434,7 +434,8 @@ class CrossCoderEncoder(nn.Module):
         x = x[:, self.encoder_layers]
         if select_features is not None:
             w = self.weight[:, :, select_features]
-            bias = self.bias[:, select_features]
+            print(select_features)
+            bias = self.bias[select_features]
         else:
             w = self.weight
             bias = self.bias
