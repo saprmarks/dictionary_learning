@@ -554,7 +554,7 @@ class CrossCoder(Dictionary, nn.Module):
         # x: (batch_size, n_layers, activation_dim)
         return self.encoder(x, **kwargs)
 
-    def get_activation(
+    def get_activations(
         self, x: th.Tensor, select_features: list[int] | None = None, **kwargs
     ) -> th.Tensor:
         f = self.encode(x, select_features=select_features, **kwargs)
