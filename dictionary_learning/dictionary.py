@@ -541,6 +541,10 @@ class CrossCoder(Dictionary, nn.Module):
         # x: (batch_size, n_layers, activation_dim)
         return self.encoder(x, **kwargs)
 
+    def get_activation(self, x: th.Tensor) -> th.Tensor:
+        f = self.encode(x)
+        return f * self.decoder.weight.norm(dim=2).sum(dim=0, keepdim=True)
+
     def decode(
         self, f: th.Tensor
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
