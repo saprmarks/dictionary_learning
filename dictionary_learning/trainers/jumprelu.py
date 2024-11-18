@@ -66,6 +66,7 @@ class TrainerJumpRelu(nn.Module, SAETrainer):
 
     Note does not use learning rate or sparsity scheduling as in the paper.
     """
+
     def __init__(
         self,
         dict_class=JumpReluAutoEncoder,

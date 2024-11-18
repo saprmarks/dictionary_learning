@@ -1,3 +1,13 @@
+# Dictionary Learning and Crosscoders
+This repo contains a few new features compared to the original repo:
+- It is `pip` installable.
+- A new `Crosscoder` class for training CrossCoders as described in [the anthropic paper](https://transformer-circuits.pub/drafts/crosscoders/index.html#model-diffing).
+- A way to cache activations in order to load them later to train a SAE or Crosscoder in `cache.py`.
+- A script for training a Crosscoder using pre-computed activations in `scripts/train_crosscoder.py`.
+
+
+# Original README
+
 This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller. 
 
 For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of March 2024, `nnsight` is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](https://nnsight.net/notebooks/tutorials/walkthrough/).

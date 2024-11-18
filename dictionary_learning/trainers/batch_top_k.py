@@ -185,7 +185,11 @@ class TrainerBatchTopK(SAETrainer):
                 x,
                 x_hat,
                 f,
-                {"l2_loss": l2_loss.item(), "auxk_loss": auxk_loss.item(), "loss": loss.item()},
+                {
+                    "l2_loss": l2_loss.item(),
+                    "auxk_loss": auxk_loss.item(),
+                    "loss": loss.item(),
+                },
             )
 
     def update(self, step, x):

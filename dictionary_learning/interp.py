@@ -80,7 +80,14 @@ def feature_effect(
 
 
 def examine_dimension(
-    model, submodule, buffer, dictionary=None, max_length=128, n_inputs=512, dim_idx=None, k=30
+    model,
+    submodule,
+    buffer,
+    dictionary=None,
+    max_length=128,
+    n_inputs=512,
+    dim_idx=None,
+    k=30,
 ):
 
     tracer_kwargs = {
@@ -142,7 +149,9 @@ def examine_dimension(
     top_affected = feature_effect(
         model, submodule, dictionary, dim_idx, tokens, max_length=max_length, k=k
     )
-    top_affected = [(model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)]
+    top_affected = [
+        (model.tokenizer.decode(tok), prob.item()) for tok, prob in zip(*top_affected)
+    ]
 
     return namedtuple("featureProfile", ["top_contexts", "top_tokens", "top_affected"])(
         top_contexts, top_tokens, top_affected
@@ -160,7 +169,8 @@ def feature_umap(
     feat_idxs=None,  # if not none, indicate the feature with a red dot
 ):
     """
-    Fit a UMAP embedding of the dictionary features and return a plotly plot of the result."""
+    Fit a UMAP embedding of the dictionary features and return a plotly plot of the result.
+    """
     if weight == "encoder":
         df = pd.DataFrame(dictionary.encoder.weight.cpu().detach().numpy())
     else:
@@ -177,9 +187,13 @@ def feature_umap(
     if isinstance(feat_idxs, int):
         feat_idxs = [feat_idxs]
     else:
-        colors = ["blue" if i not in feat_idxs else "red" for i in range(embedding.shape[0])]
+        colors = [
+            "blue" if i not in feat_idxs else "red" for i in range(embedding.shape[0])
+        ]
     if n_components == 2:
-        return px.scatter(x=embedding[:, 0], y=embedding[:, 1], hover_name=df.index, color=colors)
+        return px.scatter(
+            x=embedding[:, 0], y=embedding[:, 1], hover_name=df.index, color=colors
+        )
     if n_components == 3:
         return px.scatter_3d(
             x=embedding[:, 0],
