@@ -78,7 +78,9 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         top_indices_BK = post_topk.indices
 
         buffer_BF = t.zeros_like(post_relu_feat_acts_BF)
-        encoded_acts_BF = buffer_BF.scatter_(dim=-1, index=top_indices_BK, src=tops_acts_BK)
+        encoded_acts_BF = buffer_BF.scatter_(
+            dim=-1, index=top_indices_BK, src=tops_acts_BK
+        )
 
         if return_topk:
             return encoded_acts_BF, tops_acts_BK, top_indices_BK
@@ -180,7 +182,9 @@ class TrainerTopK(SAETrainer):
         self.dead_feature_threshold = 10_000_000
 
         # Optimizer and scheduler
-        self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
+        self.optimizer = t.optim.Adam(
+            self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999)
+        )
 
         def lr_fn(step):
             if step < decay_start:
@@ -242,7 +246,9 @@ class TrainerTopK(SAETrainer):
             auxk_acts, auxk_indices = auxk_latents.topk(k_aux, sorted=False)
 
             auxk_buffer_BF = t.zeros_like(f)
-            auxk_acts_BF = auxk_buffer_BF.scatter_(dim=-1, index=auxk_indices, src=auxk_acts)
+            auxk_acts_BF = auxk_buffer_BF.scatter_(
+                dim=-1, index=auxk_indices, src=auxk_acts
+            )
 
             # Encourage the top ~50% of dead latents to predict the residual of the
             # top k living latents
@@ -263,7 +269,11 @@ class TrainerTopK(SAETrainer):
                 x,
                 x_hat,
                 f,
-                {"l2_loss": l2_loss.item(), "auxk_loss": auxk_loss.item(), "loss": loss.item()},
+                {
+                    "l2_loss": l2_loss.item(),
+                    "auxk_loss": auxk_loss.item(),
+                    "loss": loss.item(),
+                },
             )
 
     def update(self, step, x):
