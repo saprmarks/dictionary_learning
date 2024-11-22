@@ -49,7 +49,7 @@ class Dictionary(ABC, nn.Module, PyTorchModelHubMixin):
             device: Device to load the model to
             **kwargs: Additional arguments passed to loading function
         """
-        model = PyTorchModelHubMixin.from_pretrained(cls, path, **kwargs)
+        model = super(Dictionary, cls).from_pretrained(path, **kwargs)
         if device is not None:
             model.to(device)
         if dtype is not None:
