@@ -35,13 +35,26 @@ class Dictionary(ABC, nn.Module, PyTorchModelHubMixin):
         """
         pass
 
-    # @classmethod
-    # @abstractmethod
-    # def from_pretrained(cls, path, device=None, **kwargs) -> "Dictionary":
-    #     """
-    #     Load a pretrained dictionary from a file.
-    #     """
-    #     pass
+    @classmethod
+    @abstractmethod
+    def from_pretrained(
+        cls, path, from_hub=False, device=None, dtype=None, **kwargs
+    ) -> "Dictionary":
+        """
+        Load a pretrained dictionary from a file or hub.
+
+        Args:
+            path: Path to local file or hub model id
+            from_hub: If True, load from HuggingFace hub using PyTorchModelHubMixin
+            device: Device to load the model to
+            **kwargs: Additional arguments passed to loading function
+        """
+        model = PyTorchModelHubMixin.from_pretrained(cls, path, **kwargs)
+        if device is not None:
+            model.to(device)
+        if dtype is not None:
+            model.to(dtype=dtype)
+        return model
 
 
 class AutoEncoder(Dictionary, nn.Module):
@@ -98,10 +111,13 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost
 
     @classmethod
-    def from_pretrained(cls, path, dtype=th.float, device=None):
-        """
-        Load a pretrained autoencoder from a file.
-        """
+    def from_pretrained(
+        cls, path, dtype=th.float, from_hub=False, device=None, **kwargs
+    ):
+        if from_hub:
+            return super().from_pretrained(path, dtype=dtype, device=device, **kwargs)
+
+        # Existing custom loading logic
         state_dict = th.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = cls(activation_dim, dict_size)
@@ -220,13 +236,15 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         else:
             return x_hat
 
-    def from_pretrained(path, device=None):
-        """
-        Load a pretrained autoencoder from a file.
-        """
+    @classmethod
+    def from_pretrained(cls, path, from_hub=False, device=None, dtype=None, **kwargs):
+        if from_hub:
+            return super().from_pretrained(path, device=device, dtype=dtype, **kwargs)
+
+        # Existing custom loading logic
         state_dict = th.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
-        autoencoder = GatedAutoEncoder(activation_dim, dict_size)
+        autoencoder = cls(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
@@ -290,6 +308,7 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         cls,
         path: str | None = None,
         load_from_sae_lens: bool = False,
+        from_hub: bool = False,
         dtype: th.dtype = th.float32,
         device: th.device | None = None,
         **kwargs,
@@ -300,9 +319,13 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         loading function.
         """
         if not load_from_sae_lens:
+            if from_hub:
+                return super().from_pretrained(
+                    path, device=device, dtype=dtype, **kwargs
+                )
             state_dict = th.load(path)
             dict_size, activation_dim = state_dict["W_enc"].shape
-            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
+            autoencoder = cls(activation_dim, dict_size)
             autoencoder.load_state_dict(state_dict)
         else:
             from sae_lens import SAE
@@ -366,13 +389,14 @@ class AutoEncoderNew(Dictionary, nn.Module):
             f = f * self.decoder.weight.norm(dim=0, keepdim=True)
             return x_hat, f
 
-    def from_pretrained(path, device=None):
-        """
-        Load a pretrained autoencoder from a file.
-        """
+    @classmethod
+    def from_pretrained(cls, path, device=None, from_hub=False, dtype=None, **kwargs):
+        if from_hub:
+            return super().from_pretrained(path, device=device, dtype=dtype, **kwargs)
+
         state_dict = th.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
-        autoencoder = AutoEncoderNew(activation_dim, dict_size)
+        autoencoder = cls(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
@@ -592,29 +616,34 @@ class CrossCoder(Dictionary, nn.Module):
         else:
             return x_hat
 
-    # @classmethod
-    # def from_pretrained(
-    #     cls,
-    #     path: str,
-    #     dtype: th.dtype = th.float32,
-    #     device: th.device | None = None,
-    # ):
-    #     """
-    #     Load a pretrained cross-coder from a file.
-    #     """
-    #     state_dict = th.load(path, map_location="cpu", weights_only=True)
-    #     if "encoder.weight" not in state_dict:
-    #         warn(
-    #             "Cross-coder state dict was saved while torch.compiled was enabled. Fixing..."
-    #         )
-    #         state_dict = {k.split("_orig_mod.")[1]: v for k, v in state_dict.items()}
-    #     num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
-    #     cross_coder = cls(activation_dim, dict_size, num_layers)
-    #     cross_coder.load_state_dict(state_dict)
+    @classmethod
+    def from_pretrained(
+        cls,
+        path: str,
+        dtype: th.dtype = th.float32,
+        device: th.device | None = None,
+        from_hub: bool = False,
+        **kwargs,
+    ):
+        """
+        Load a pretrained cross-coder from a file.
+        """
+        if from_hub:
+            return super().from_pretrained(path, device=device, dtype=dtype, **kwargs)
 
-    #     if device is not None:
-    #         cross_coder = cross_coder.to(device)
-    #     return cross_coder.to(dtype=dtype)
+        state_dict = th.load(path, map_location="cpu", weights_only=True)
+        if "encoder.weight" not in state_dict:
+            warn(
+                "Cross-coder state dict was saved while torch.compiled was enabled. Fixing..."
+            )
+            state_dict = {k.split("_orig_mod.")[1]: v for k, v in state_dict.items()}
+        num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
+        cross_coder = cls(activation_dim, dict_size, num_layers)
+        cross_coder.load_state_dict(state_dict)
+
+        if device is not None:
+            cross_coder = cross_coder.to(device)
+        return cross_coder.to(dtype=dtype)
 
     def resample_neurons(self, deads, activations):
         # https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling
