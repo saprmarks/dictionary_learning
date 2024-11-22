@@ -35,13 +35,13 @@ class Dictionary(ABC, nn.Module, PyTorchModelHubMixin):
         """
         pass
 
-    @classmethod
-    @abstractmethod
-    def from_pretrained(cls, path, device=None, **kwargs) -> "Dictionary":
-        """
-        Load a pretrained dictionary from a file.
-        """
-        pass
+    # @classmethod
+    # @abstractmethod
+    # def from_pretrained(cls, path, device=None, **kwargs) -> "Dictionary":
+    #     """
+    #     Load a pretrained dictionary from a file.
+    #     """
+    #     pass
 
 
 class AutoEncoder(Dictionary, nn.Module):
