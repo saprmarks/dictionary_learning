@@ -3,15 +3,18 @@ Defines the dictionary classes
 """
 
 from abc import ABC, abstractclassmethod, abstractmethod
+from huggingface_hub import PyTorchModelHubMixin
+
 import torch as th
 import torch.nn as nn
 import torch.nn.init as init
 from torch.nn.functional import relu
 import einops
 from warnings import warn
+import tempfile
 
 
-class Dictionary(ABC, nn.Module):
+class Dictionary(ABC, nn.Module, PyTorchModelHubMixin):
     """
     A dictionary consists of a collection of vectors, an encoder, and a decoder.
     """
