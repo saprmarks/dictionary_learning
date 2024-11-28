@@ -118,7 +118,7 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         return autoencoder
 
 
-class TrainerBatchTopK(SAETrainer):
+class TrainerBatchTopKToJump(SAETrainer):
     def __init__(
         self,
         dict_class=BatchTopKToJumpSAE,
