@@ -3,20 +3,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 import einops
 from collections import namedtuple
+from contextlib import contextmanager
 
 from ..dictionary import Dictionary
 from ..trainers.trainer import SAETrainer
 
 
 class BatchTopKToJumpSAE(Dictionary, nn.Module):
-    def __init__(
-        self, activation_dim: int, dict_size: int, k: int, warmup_steps: int = 15000
-    ):
+    def __init__(self, activation_dim: int, dict_size: int, k: int):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.k = k
-        self.warmup_steps = warmup_steps
+
+        self.train_mode = False
+        self.store_thresholds = False
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
@@ -29,7 +30,30 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         self.register_buffer("running_thresholds", t.zeros(dict_size))
         self.register_buffer("threshold_count", t.zeros(1))
 
-    def encode_train(self, x: t.Tensor, return_active: bool = False, step: int = None):
+    @contextmanager
+    def training_mode(self, store_thresholds: bool = False):
+        """Context manager for temporarily enabling training mode.
+
+        Args:
+            store_thresholds: If True, updates running thresholds during training
+        """
+        old_mode = self.train_mode
+        old_thresholds = self.store_thresholds
+        self.train_mode = True
+        self.store_thresholds = store_thresholds
+        try:
+            yield
+        finally:
+            self.train_mode = old_mode
+            self.store_thresholds = old_thresholds
+
+    def encode(self, x: t.Tensor, return_active: bool = False):
+        if self.train_mode:
+            return self._encode_train(x, return_active)
+        else:
+            return self._encode_inference(x)
+
+    def _encode_train(self, x: t.Tensor, return_active: bool = False):
         """Used during training - applies BatchTopK and updates thresholds"""
         pre_acts = self.encoder(x - self.b_dec)
 
@@ -46,10 +70,10 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         )
 
         # Update running mean of thresholds after warmup
-        if step is not None and step >= self.warmup_steps:
+        if self.store_thresholds:
             with t.no_grad():
                 current_thresholds = t.quantile(
-                    pre_acts, 1 - self.k / self.dict_size, dim=0
+                    post_relu_feat_acts_BF, 1 - self.k / self.dict_size, dim=0
                 )
                 # Update running mean
                 self.threshold_count += 1
@@ -63,7 +87,7 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         else:
             return encoded_acts_BF
 
-    def encode(self, x: t.Tensor):
+    def _encode_inference(self, x: t.Tensor):
         """Default encode function - uses JumpReLU style thresholding"""
         pre_acts = self.encoder(x - self.b_dec)
         return pre_acts * (pre_acts > self.running_thresholds).float()
@@ -129,11 +153,12 @@ class TrainerBatchTopKToJump(SAETrainer):
         decay_start=24000,
         steps=30000,
         top_k_aux=512,
+        warmup_step_share=0.9,
         seed=None,
         device=None,
         layer=None,
         lm_name=None,
-        wandb_name="BatchTopKSAE",
+        wandb_name="BatchTopKToJumpSAE",
         submodule_name=None,
     ):
         super().__init__(seed)
@@ -144,7 +169,7 @@ class TrainerBatchTopKToJump(SAETrainer):
         self.wandb_name = wandb_name
         self.steps = steps
         self.k = k
-
+        self.warmup_step_share = warmup_step_share
         if seed is not None:
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
@@ -204,7 +229,7 @@ class TrainerBatchTopKToJump(SAETrainer):
             return t.tensor(0, dtype=x.dtype, device=x.device)
 
     def loss(self, x, step=None, logging=False):
-        f, active_indices = self.ae.encode_train(x, return_active=True, step=step)
+        f, active_indices = self.ae.encode(x, return_active=True)
         l0 = (f != 0).float().sum(dim=-1).mean().item()
         x_hat = self.ae.decode(f)
 
@@ -243,18 +268,19 @@ class TrainerBatchTopKToJump(SAETrainer):
             median = self.geometric_median(x)
             self.ae.b_dec.data = median
 
-        self.ae.set_decoder_norm_to_unit_norm()
+        store_thresholds = step >= int(self.steps * self.warmup_step_share)
+        with self.ae.training_mode(store_thresholds=store_thresholds):
+            self.ae.set_decoder_norm_to_unit_norm()
+            x = x.to(self.device)
+            loss = self.loss(x, step=step)
+            loss.backward()
 
-        x = x.to(self.device)
-        loss = self.loss(x, step=step)
-        loss.backward()
+            t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
+            self.ae.remove_gradient_parallel_to_decoder_directions()
 
-        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
-        self.ae.remove_gradient_parallel_to_decoder_directions()
-
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        self.scheduler.step()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self.scheduler.step()
 
         return loss.item()
 
