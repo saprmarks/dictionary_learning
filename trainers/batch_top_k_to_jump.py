@@ -14,7 +14,9 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.k = k
+
+        assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
+        self.register_buffer("k", t.tensor(k))
 
         self.train_mode = False
         self.store_thresholds = False
@@ -299,7 +301,7 @@ class TrainerBatchTopKToJump(SAETrainer):
             "seed": self.seed,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
-            "k": self.ae.k,
+            "k": self.ae.k.item(),
             "device": self.device,
             "layer": self.layer,
             "lm_name": self.lm_name,
