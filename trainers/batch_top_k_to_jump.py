@@ -229,58 +229,62 @@ class TrainerBatchTopKToJump(SAETrainer):
             return t.tensor(0, dtype=x.dtype, device=x.device)
 
     def loss(self, x, step=None, logging=False):
-        f, active_indices = self.ae.encode(x, return_active=True)
-        l0 = (f != 0).float().sum(dim=-1).mean().item()
-        x_hat = self.ae.decode(f)
+        store_thresholds = (
+            step >= int(self.steps * self.warmup_step_share)
+            if step is not None
+            else False
+        )
+        with self.ae.training_mode(store_thresholds=store_thresholds):
+            f, active_indices = self.ae.encode(x, return_active=True)
+            l0 = (f != 0).float().sum(dim=-1).mean().item()
+            x_hat = self.ae.decode(f)
 
-        e = x_hat - x
+            e = x_hat - x
 
-        self.effective_l0 = self.k
+            self.effective_l0 = self.k
 
-        num_tokens_in_step = x.size(0)
-        did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
-        did_fire[active_indices] = True
-        self.num_tokens_since_fired += num_tokens_in_step
-        self.num_tokens_since_fired[did_fire] = 0
+            num_tokens_in_step = x.size(0)
+            did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
+            did_fire[active_indices] = True
+            self.num_tokens_since_fired += num_tokens_in_step
+            self.num_tokens_since_fired[did_fire] = 0
 
-        auxk_loss = self.get_auxiliary_loss(x, x_hat, f)
+            auxk_loss = self.get_auxiliary_loss(x, x_hat, f)
 
-        l2_loss = e.pow(2).sum(dim=-1).mean()
-        auxk_loss = auxk_loss.sum(dim=-1).mean()
-        loss = l2_loss + self.auxk_alpha * auxk_loss
+            l2_loss = e.pow(2).sum(dim=-1).mean()
+            auxk_loss = auxk_loss.sum(dim=-1).mean()
+            loss = l2_loss + self.auxk_alpha * auxk_loss
 
-        if not logging:
-            return loss
-        else:
-            return namedtuple("LossLog", ["x", "x_hat", "f", "losses"])(
-                x,
-                x_hat,
-                f,
-                {
-                    "l2_loss": l2_loss.item(),
-                    "auxk_loss": auxk_loss.item(),
-                    "loss": loss.item(),
-                },
-            )
+            if not logging:
+                return loss
+            else:
+                return namedtuple("LossLog", ["x", "x_hat", "f", "losses"])(
+                    x,
+                    x_hat,
+                    f,
+                    {
+                        "l2_loss": l2_loss.item(),
+                        "auxk_loss": auxk_loss.item(),
+                        "loss": loss.item(),
+                    },
+                )
 
     def update(self, step, x):
         if step == 0:
             median = self.geometric_median(x)
             self.ae.b_dec.data = median
 
-        store_thresholds = step >= int(self.steps * self.warmup_step_share)
-        with self.ae.training_mode(store_thresholds=store_thresholds):
-            self.ae.set_decoder_norm_to_unit_norm()
-            x = x.to(self.device)
-            loss = self.loss(x, step=step)
-            loss.backward()
+        self.ae.set_decoder_norm_to_unit_norm()
+        x = x.to(self.device)
+        loss = self.loss(x, step=step)
+        loss.backward()
 
-            t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
-            self.ae.remove_gradient_parallel_to_decoder_directions()
+        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
+        self.ae.remove_gradient_parallel_to_decoder_directions()
 
-            self.optimizer.step()
-            self.optimizer.zero_grad()
-            self.scheduler.step()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.scheduler.step()
 
         return loss.item()
 
