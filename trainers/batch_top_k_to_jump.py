@@ -28,9 +28,8 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
         self.set_decoder_norm_to_unit_norm()
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-        # Initialize running statistics
-        self.register_buffer("running_thresholds", t.zeros(dict_size))
-        self.register_buffer("threshold_count", t.zeros(1))
+        # Initialize running statistics - we'll use the minimum of the activations
+        self.register_buffer("running_thresholds", t.ones(dict_size) * float("inf"))
 
     @contextmanager
     def training_mode(self, store_thresholds: bool = False):
@@ -71,18 +70,20 @@ class BatchTopKToJumpSAE(Dictionary, nn.Module):
             .reshape(buffer_BF.shape)
         )
 
-        # Update running mean of thresholds after warmup
         if self.store_thresholds:
             with t.no_grad():
-                current_thresholds = t.quantile(
-                    post_relu_feat_acts_BF, 1 - self.k / self.dict_size, dim=0
+                # Compute minimum of positive activations for each feature
+                # Replace zeros with infinity of same dtype
+                inf_value = t.tensor(
+                    float("inf"),
+                    device=encoded_acts_BF.device,
+                    dtype=encoded_acts_BF.dtype,
                 )
-                # Update running mean
-                self.threshold_count += 1
-                self.running_thresholds = (
-                    self.running_thresholds * (self.threshold_count - 1)
-                    + current_thresholds
-                ) / self.threshold_count
+                mask = encoded_acts_BF > 0
+                masked_acts = t.where(mask, encoded_acts_BF, inf_value)
+                batch_mins = masked_acts.min(dim=0)[0]
+                # Update running thresholds where we found new minimums
+                self.running_thresholds = t.minimum(self.running_thresholds, batch_mins)
 
         if return_active:
             return encoded_acts_BF, encoded_acts_BF.sum(0) > 0
