@@ -154,6 +154,7 @@ class TrainerBatchTopKToJump(SAETrainer):
         steps=30000,
         top_k_aux=512,
         warmup_step_share=0.9,
+        dead_feature_threshold=10_000_000,
         seed=None,
         device=None,
         layer=None,
@@ -185,7 +186,7 @@ class TrainerBatchTopKToJump(SAETrainer):
         scale = dict_size / (2**14)
         self.lr = 2e-4 / scale**0.5
         self.auxk_alpha = auxk_alpha
-        self.dead_feature_threshold = 10_000_000
+        self.dead_feature_threshold = dead_feature_threshold
         self.top_k_aux = top_k_aux
 
         self.optimizer = t.optim.Adam(
