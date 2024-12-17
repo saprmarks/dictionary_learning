@@ -110,7 +110,7 @@ def loss_recovered(
         else:
             raise ValueError(f"Invalid value for io: {io}")
         
-        input = model.input.save()
+        input = model.inputs.save()
         logits_zero = model.output.save()
     logits_zero = logits_zero.value
 
