@@ -6,6 +6,7 @@ import json
 import multiprocessing as mp
 import os
 from queue import Empty
+from typing import Optional
 
 import torch as t
 from tqdm import tqdm
@@ -75,17 +76,17 @@ def log_stats(
 
 def trainSAE(
     data,
-    trainer_configs,
-    use_wandb=False,
-    wandb_entity="",
-    wandb_project="",
-    steps=None,
-    save_steps=None,
-    save_dir=None,
-    log_steps=None,
-    activations_split_by_head=False,
-    transcoder=False,
-    run_cfg={},
+    trainer_configs: list[dict],
+    use_wandb:bool=False,
+    wandb_entity:str="",
+    wandb_project:str="",
+    steps:Optional[int]=None,
+    save_steps:Optional[list[int]]=None,
+    save_dir:Optional[str]=None,
+    log_steps:Optional[int]=None,
+    activations_split_by_head:bool=False,
+    transcoder:bool=False,
+    run_cfg:dict={},
 ):
     """
     Train SAEs using the given trainers
@@ -140,7 +141,7 @@ def trainSAE(
             )
 
         # saving
-        if save_steps is not None and step % save_steps == 0:
+        if save_steps is not None and step in save_steps:
             for dir, trainer in zip(save_dirs, trainers):
                 if dir is not None:
                     if not os.path.exists(os.path.join(dir, "checkpoints")):
