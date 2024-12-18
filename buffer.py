@@ -121,10 +121,12 @@ class ActivationBuffer:
                     invoker_args={"truncation": True, "max_length": self.ctx_len},
                 ):
                     if self.io == "in":
-                        hidden_states = self.submodule.input[0].save()
+                        hidden_states = self.submodule.inputs[0].save()
                     else:
                         hidden_states = self.submodule.output.save()
-                    input = self.model.input.save()
+                    input = self.model.inputs.save()
+
+                    self.submodule.output.stop()
             attn_mask = input.value[1]["attention_mask"]
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
@@ -251,8 +253,8 @@ class HeadActivationBuffer:
         while len(self.activations) < self.n_ctxs * self.ctx_len:
             with t.no_grad():
                 with self.model.trace(self.text_batch(), **tracer_kwargs, invoker_args={'truncation': True, 'max_length': self.ctx_len}, remote=self.remote):
-                    input = self.model.input.save()
-                    hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.input[0][0]#.save()
+                    input = self.model.inputs.save()
+                    hidden_states = self.model.model.layers[self.layer].self_attn.o_proj.inputs[0][0]#.save()
                     if isinstance(hidden_states, tuple):
                         hidden_states = hidden_states[0]
 
@@ -416,7 +418,7 @@ class NNsightActivationBuffer:
                 invoker_args={"truncation": True, "max_length": self.ctx_len},
             ):
                 if self.io in ["in", "in_and_out"]:
-                    hidden_states_in = self.submodule.input[0].save()
+                    hidden_states_in = self.submodule.inputs[0].save()
                 if self.io in ["out", "in_and_out"]:
                     hidden_states_out = self.submodule.output.save()
 

@@ -101,7 +101,7 @@ def examine_dimension(
     inputs = buffer.tokenized_batch(batch_size=n_inputs)
 
     with t.no_grad(), model.trace(inputs, **tracer_kwargs):
-        tokens = model.input[1][
+        tokens = model.inputs[1][
             "input_ids"
         ].save()  # if you're getting errors, check here; might only work for pythia models
         activations = submodule.output
