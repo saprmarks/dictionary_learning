@@ -36,21 +36,17 @@ def loss_recovered(
     # logits when replacing component activations with reconstruction by autoencoder
     with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
-            x = submodule.input[0]
-            if type(submodule.input.shape) == tuple: x = x[0]
+            x = submodule.input
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
         elif io == 'out':
-            x = submodule.output
-            if type(submodule.output.shape) == tuple: x = x[0]
+            x = submodule.output[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
         elif io == 'in_and_out':
-            x = submodule.input[0]
-            if type(submodule.input.shape) == tuple: x = x[0]
-            print(f'x.shape: {x.shape}')
+            x = submodule.input
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
@@ -58,35 +54,28 @@ def loss_recovered(
             raise ValueError(f"Invalid value for io: {io}")
         x = x.save()
 
-    # pull this out so dictionary can be written without FakeTensor (top_k needs this)
-    x_hat = dictionary(x.view(-1, x.shape[-1])).view(x.shape).to(model.dtype)
+    x_hat = dictionary(x).to(model.dtype)
 
     # intervene with `x_hat`
     with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
-            x = submodule.input[0]
+            x = submodule.input
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x_hat = x_hat / scale
-            if type(submodule.input.shape) == tuple:
-                submodule.input[0][:] = x_hat
-            else:
-                submodule.input = x_hat
+            submodule.input[:] = x_hat
         elif io == 'out':
-            x = submodule.output
+            x = submodule.output[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x_hat = x_hat / scale
-            if type(submodule.output.shape) == tuple:
-                submodule.output = (x_hat,)
-            else:
-                submodule.output = x_hat
+            submodule.output[0][:] = x_hat
         elif io == 'in_and_out':
-            x = submodule.input[0]
+            x = submodule.input
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x_hat = x_hat / scale
-            submodule.output = x_hat
+            submodule.output[0][:] = x_hat
         else:
             raise ValueError(f"Invalid value for io: {io}")
 
@@ -96,22 +85,17 @@ def loss_recovered(
     # logits when replacing component activations with zeros
     with model.trace(text, **tracer_args, invoker_args=invoker_args):
         if io == 'in':
-            x = submodule.input[0]
-            if type(submodule.input.shape) == tuple:
-                submodule.input[0][:] = t.zeros_like(x[0])
-            else:
-                submodule.input = t.zeros_like(x)
+            x = submodule.input
+            submodule.input[:] = t.zeros_like(x)
         elif io in ['out', 'in_and_out']:
-            x = submodule.output
-            if type(submodule.output.shape) == tuple:
-                submodule.output[0][:] = t.zeros_like(x[0])
-            else:
-                submodule.output = t.zeros_like(x)
+            x = submodule.output[0]
+            submodule.output[0][:] = t.zeros_like(x)
         else:
             raise ValueError(f"Invalid value for io: {io}")
         
         input = model.inputs.save()
         logits_zero = model.output.save()
+
     logits_zero = logits_zero.value
 
     # get everything into the right format
