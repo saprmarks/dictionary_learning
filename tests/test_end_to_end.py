@@ -19,32 +19,32 @@ from dictionary_learning.evaluation import evaluate
 
 EXPECTED_RESULTS = {
     "AutoEncoderTopK": {
-        "l2_loss": 4.462644577026367,
-        "l1_loss": 44.446834564208984,
+        "l2_loss": 4.325331306457519,
+        "l1_loss": 47.92763671875,
         "l0": 40.0,
-        "frac_alive": 0.45458984375,
-        "frac_variance_explained": 0.9372867941856384,
-        "cossim": 0.9471449851989746,
-        "l2_ratio": 0.9524278044700623,
-        "relative_reconstruction_bias": 0.9986423254013062,
-        "loss_original": 3.1832079887390137,
-        "loss_reconstructed": 3.713366985321045,
-        "loss_zero": 12.936450958251953,
-        "frac_recovered": 0.9456427693367004,
+        "frac_variance_explained": 0.9584966480731965,
+        "cossim": 0.948570293188095,
+        "l2_ratio": 0.94872345328331,
+        "relative_reconstruction_bias": 0.9998040139675141,
+        "loss_original": 3.328495955467224,
+        "loss_reconstructed": 3.819682216644287,
+        "loss_zero": 13.250199031829833,
+        "frac_recovered": 0.9503251194953919,
+        "frac_alive": 0.99951171875,
     },
     "AutoEncoder": {
-        "l2_loss": 6.721538066864014,
-        "l1_loss": 28.914989471435547,
-        "l0": 61.29999923706055,
-        "frac_alive": 0.14404296875,
-        "frac_variance_explained": 0.6077123880386353,
-        "cossim": 0.869745135307312,
-        "l2_ratio": 0.801030695438385,
-        "relative_reconstruction_bias": 0.9309902191162109,
-        "loss_original": 3.1832079887390137,
-        "loss_reconstructed": 5.499264717102051,
-        "loss_zero": 12.936450958251953,
-        "frac_recovered": 0.7625347375869751,
+        "l2_loss": 6.5741173267364506,
+        "l1_loss": 32.06615734100342,
+        "l0": 60.9147216796875,
+        "frac_variance_explained": 0.9042629599571228,
+        "cossim": 0.8782194256782532,
+        "l2_ratio": 0.814234834909439,
+        "relative_reconstruction_bias": 0.9813631415367127,
+        "loss_original": 3.328495955467224,
+        "loss_reconstructed": 5.7899915218353275,
+        "loss_zero": 13.250199031829833,
+        "frac_recovered": 0.754741370677948,
+        "frac_alive": 0.9921875,
     },
 }
 
@@ -105,9 +105,7 @@ def test_sae_training():
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
 
-    MODEL_NAME = "EleutherAI/pythia-70m-deduped"
     model = LanguageModel(MODEL_NAME, dispatch=True, device_map=DEVICE)
-    layer = 3
 
     context_length = 128
     llm_batch_size = 512  # Fits on a 24GB GPU
@@ -172,7 +170,7 @@ def test_sae_training():
                 "seed": random_seed,
                 "wandb_name": f"TopKTrainer-{MODEL_NAME}-{submodule_name}",
                 "device": DEVICE,
-                "layer": layer,
+                "layer": LAYER,
                 "lm_name": MODEL_NAME,
                 "submodule_name": submodule_name,
             },
@@ -191,7 +189,7 @@ def test_sae_training():
                 "resample_steps": resample_steps,
                 "seed": random_seed,
                 "wandb_name": f"StandardTrainer-{MODEL_NAME}-{submodule_name}",
-                "layer": layer,
+                "layer": LAYER,
                 "lm_name": MODEL_NAME,
                 "device": DEVICE,
                 "submodule_name": submodule_name,
@@ -230,6 +228,8 @@ def test_evaluation():
 
     context_length = 128
     llm_batch_size = 100
+    sae_batch_size = 4096
+    n_batches = 10
     buffer_size = 256
     io = "out"
 
@@ -239,7 +239,7 @@ def test_evaluation():
     input_strings = []
     for i, example in enumerate(generator):
         input_strings.append(example)
-        if i > buffer_size * 2:
+        if i > buffer_size * n_batches:
             break
 
     for ae_path in ae_paths:
@@ -258,7 +258,7 @@ def test_evaluation():
             n_ctxs=buffer_size,
             ctx_len=context_length,
             refresh_batch_size=llm_batch_size,
-            out_batch_size=llm_batch_size,
+            out_batch_size=sae_batch_size,
             io=io,
             d_submodule=activation_dim,
             device=DEVICE,
@@ -271,6 +271,7 @@ def test_evaluation():
             llm_batch_size,
             io=io,
             device=DEVICE,
+            n_batches=n_batches,
         )
 
         print(eval_results)

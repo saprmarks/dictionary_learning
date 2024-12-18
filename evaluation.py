@@ -161,6 +161,9 @@ def evaluate(
         l0 = (f != 0).float().sum(dim=-1).mean()
         
         features_BF = t.flatten(f, start_dim=0, end_dim=-2).to(dtype=t.float32) # If f is shape (B, L, D), flatten to (B*L, D)
+        assert features_BF.shape[-1] == dictionary.dict_size
+        assert len(features_BF.shape) == 2
+
         active_features += features_BF.sum(dim=0)
 
         # cosine similarity between x and x_hat
@@ -191,7 +194,7 @@ def evaluate(
 
         if not isinstance(activations, (ActivationBuffer, NNsightActivationBuffer)):
             continue
-        
+
         # compute loss recovered
         loss_original, loss_reconstructed, loss_zero = loss_recovered(
             activations.text_batch(batch_size=batch_size),
