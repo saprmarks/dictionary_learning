@@ -125,6 +125,8 @@ class ActivationBuffer:
                     else:
                         hidden_states = self.submodule.output.save()
                     input = self.model.inputs.save()
+
+                    self.submodule.output.stop()
             attn_mask = input.value[1]["attention_mask"]
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
