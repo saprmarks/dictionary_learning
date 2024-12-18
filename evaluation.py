@@ -24,11 +24,20 @@ def loss_recovered(
     How much of the model's loss is recovered by replacing the component output
     with the reconstruction by the autoencoder?
     """
-
+    
     if max_len is None:
         invoker_args = {}
     else:
         invoker_args = {"truncation": True, "max_length": max_len }
+
+    with model.trace("_"):
+        temp_output = submodule.output.save()
+
+    output_is_tuple = False
+    # Note: isinstance() won't work here as torch.Size is a subclass of tuple,
+    # so isinstance(temp_output.shape, tuple) would return True even for torch.Size.
+    if type(temp_output.shape) == tuple:
+        output_is_tuple = True
 
     # unmodified logits
     with model.trace(text, invoker_args=invoker_args):
@@ -43,7 +52,8 @@ def loss_recovered(
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
         elif io == 'out':
-            x = submodule.output[0]
+            x = submodule.output
+            if output_is_tuple: x = x[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x = x * scale
@@ -56,6 +66,9 @@ def loss_recovered(
             raise ValueError(f"Invalid value for io: {io}")
         x = x.save()
 
+    # If we incorrectly handle output_is_tuple, such as with some mlp submodules, we will get an error here.
+    assert len(x.shape) == 3, f"Expected x to have shape (B, L, D), got {x.shape}, output_is_tuple: {output_is_tuple}"
+
     x_hat = dictionary(x).to(model.dtype)
 
     # intervene with `x_hat`
@@ -67,17 +80,24 @@ def loss_recovered(
                 x_hat = x_hat / scale
             submodule.input[:] = x_hat
         elif io == 'out':
-            x = submodule.output[0]
+            x = submodule.output
+            if output_is_tuple: x = x[0]
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x_hat = x_hat / scale
-            submodule.output[0][:] = x_hat
+            if output_is_tuple:
+                submodule.output[0][:] = x_hat
+            else:
+                submodule.output[:] = x_hat
         elif io == 'in_and_out':
             x = submodule.input
             if normalize_batch:
                 scale = (dictionary.activation_dim ** 0.5) / x.norm(dim=-1).mean()
                 x_hat = x_hat / scale
-            submodule.output[0][:] = x_hat
+            if output_is_tuple:
+                submodule.output[0][:] = x_hat
+            else:
+                submodule.output[:] = x_hat
         else:
             raise ValueError(f"Invalid value for io: {io}")
 
@@ -90,8 +110,11 @@ def loss_recovered(
             x = submodule.input
             submodule.input[:] = t.zeros_like(x)
         elif io in ['out', 'in_and_out']:
-            x = submodule.output[0]
-            submodule.output[0][:] = t.zeros_like(x)
+            x = submodule.output
+            if output_is_tuple:
+                submodule.output[0][:] = t.zeros_like(x[0])
+            else:
+                submodule.output[:] = t.zeros_like(x)
         else:
             raise ValueError(f"Invalid value for io: {io}")
         

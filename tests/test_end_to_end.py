@@ -100,7 +100,7 @@ def load_dictionary(base_path: str, device: str) -> tuple:
 
 
 def test_sae_training():
-    """End to end test for training an SAE. Takes ~3 minutes on an RTX 3090.
+    """End to end test for training an SAE. Takes ~2 minutes on an RTX 3090.
     This isn't a nice suite of unit tests, but it's better than nothing."""
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
@@ -117,7 +117,6 @@ def test_sae_training():
     num_tokens = 10_000_000
 
     # sae training parameters
-    random_seed = 42
     k = 40
     sparsity_penalty = 0.05
     expansion_factor = 8
@@ -167,7 +166,7 @@ def test_sae_training():
                 "auxk_alpha": auxk_alpha,  # see Appendix A.2
                 "decay_start": decay_start,  # when does the lr decay start
                 "steps": steps,  # when when does training end
-                "seed": random_seed,
+                "seed": RANDOM_SEED,
                 "wandb_name": f"TopKTrainer-{MODEL_NAME}-{submodule_name}",
                 "device": DEVICE,
                 "layer": LAYER,
@@ -187,7 +186,7 @@ def test_sae_training():
                 "l1_penalty": sparsity_penalty,
                 "warmup_steps": warmup_steps,
                 "resample_steps": resample_steps,
-                "seed": random_seed,
+                "seed": RANDOM_SEED,
                 "wandb_name": f"StandardTrainer-{MODEL_NAME}-{submodule_name}",
                 "layer": LAYER,
                 "lm_name": MODEL_NAME,
