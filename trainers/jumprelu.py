@@ -60,7 +60,7 @@ class StepFunction(autograd.Function):
         return x_grad, threshold_grad, None  # None for bandwidth
 
 
-class TrainerJumpRelu(nn.Module, SAETrainer):
+class JumpReluTrainer(nn.Module, SAETrainer):
     """
     Trains a JumpReLU autoencoder.
 
@@ -77,7 +77,8 @@ class TrainerJumpRelu(nn.Module, SAETrainer):
         # TODO: What's the default lr use in the paper?
         lr=7e-5,
         bandwidth=0.001,
-        sparsity_penalty=0.1,
+        sparsity_penalty=1.0,
+        target_l0=20.0,
         device="cpu",
         layer=None,
         lm_name=None,
@@ -99,6 +100,7 @@ class TrainerJumpRelu(nn.Module, SAETrainer):
 
         self.bandwidth = bandwidth
         self.sparsity_coefficient = sparsity_penalty
+        self.target_l0 = target_l0
 
         # TODO: Better auto-naming (e.g. in BatchTopK package)
         self.wandb_name = wandb_name
@@ -123,7 +125,8 @@ class TrainerJumpRelu(nn.Module, SAETrainer):
 
         recon_loss = (x - recon).pow(2).sum(dim=-1).mean()
         l0 = StepFunction.apply(f, self.ae.threshold, self.bandwidth).sum(dim=-1).mean()
-        sparsity_loss = self.sparsity_coefficient * l0
+
+        sparsity_loss = self.sparsity_coefficient * ((l0 / self.target_l0) - 1).pow(2) 
         loss = recon_loss + sparsity_loss
 
         if not logging:
@@ -153,7 +156,7 @@ class TrainerJumpRelu(nn.Module, SAETrainer):
     @property
     def config(self):
         return {
-            "trainer_class": "TrainerJumpRelu",
+            "trainer_class": "JumpReluTrainer",
             "dict_class": "JumpReluAutoEncoder",
             "lr": self.lr,
             "steps": self.steps,

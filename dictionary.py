@@ -284,9 +284,10 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         """
         if not load_from_sae_lens:
             state_dict = t.load(path)
-            dict_size, activation_dim = state_dict['W_enc'].shape
+            activation_dim, dict_size = state_dict['W_enc'].shape
             autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
             autoencoder.load_state_dict(state_dict)
+            autoencoder = autoencoder.to(dtype=dtype, device=device)
         else:
             from sae_lens import SAE
             sae, cfg_dict, _ = SAE.from_pretrained(**kwargs)
