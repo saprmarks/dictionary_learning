@@ -16,6 +16,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
         self.register_buffer("k", t.tensor(k))
+        self.register_buffer("threshold", None)
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
@@ -24,8 +25,15 @@ class BatchTopKSAE(Dictionary, nn.Module):
         self.set_decoder_norm_to_unit_norm()
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-    def encode(self, x: t.Tensor, return_active: bool = False):
+    def encode(self, x: t.Tensor, return_active: bool = False, use_threshold: bool = True):
         post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
+
+        if use_threshold:
+            encoded_acts_BF = post_relu_feat_acts_BF * (post_relu_feat_acts_BF > self.threshold)
+            if return_active:
+                return encoded_acts_BF, encoded_acts_BF.sum(0) > 0
+            else:
+                return encoded_acts_BF
 
         # Flatten and perform batch top-k
         flattened_acts = post_relu_feat_acts_BF.flatten()
@@ -78,10 +86,10 @@ class BatchTopKSAE(Dictionary, nn.Module):
     @classmethod
     def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict['encoder.weight'].shape
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
         if k is None:
-            k = state_dict['k'].item()
-        elif 'k' in state_dict and k != state_dict['k'].item():
+            k = state_dict["k"].item()
+        elif "k" in state_dict and k != state_dict["k"].item():
             raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
 
         autoencoder = cls(activation_dim, dict_size, k)
@@ -91,7 +99,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
         return autoencoder
 
 
-class TrainerBatchTopK(SAETrainer):
+class BatchTopKTrainer(SAETrainer):
     def __init__(
         self,
         dict_class=BatchTopKSAE,
@@ -100,6 +108,7 @@ class TrainerBatchTopK(SAETrainer):
         k=8,
         auxk_alpha=1 / 32,
         decay_start=24000,
+        threshold_beta=0.999,
         steps=30000,
         top_k_aux=512,
         seed=None,
@@ -117,6 +126,7 @@ class TrainerBatchTopK(SAETrainer):
         self.wandb_name = wandb_name
         self.steps = steps
         self.k = k
+        self.threshold_beta = threshold_beta
 
         if seed is not None:
             t.manual_seed(seed)
@@ -136,9 +146,7 @@ class TrainerBatchTopK(SAETrainer):
         self.dead_feature_threshold = 10_000_000
         self.top_k_aux = top_k_aux
 
-        self.optimizer = t.optim.Adam(
-            self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999)
-        )
+        self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
         def lr_fn(step):
             if step < decay_start:
@@ -165,20 +173,34 @@ class TrainerBatchTopK(SAETrainer):
             acts_aux = t.zeros_like(acts[:, dead_features]).scatter(
                 -1, acts_topk_aux.indices, acts_topk_aux.values
             )
-            x_reconstruct_aux = F.linear(
-                acts_aux, self.ae.decoder.weight[:, dead_features]
-            )
+            x_reconstruct_aux = F.linear(acts_aux, self.ae.decoder.weight[:, dead_features])
             l2_loss_aux = (
-                self.auxk_alpha
-                * (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
+                self.auxk_alpha * (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
             )
             return l2_loss_aux
         else:
             return t.tensor(0, dtype=x.dtype, device=x.device)
 
     def loss(self, x, step=None, logging=False):
-        f, active_indices = self.ae.encode(x, return_active=True)
-        l0 = (f != 0).float().sum(dim=-1).mean().item()
+        f, active_indices = self.ae.encode(x, return_active=True, use_threshold=False)
+        # l0 = (f != 0).float().sum(dim=-1).mean().item()
+
+        active = f[f > 0]
+
+        if active.size(0) == 0:
+            min_activation = 0.0
+        else:
+            min_activation = active.min()
+
+        print(f"min_activation: {min_activation}")
+
+        if self.threshold is None:
+            self.threshold = min_activation
+        else:
+            self.threshold = (self.threshold_beta * self.threshold) + (
+                (1 - self.threshold_beta) * min_activation
+            )
+
         x_hat = self.ae.decode(f)
 
         e = x_hat - x
