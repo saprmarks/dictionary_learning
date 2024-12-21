@@ -4,49 +4,247 @@ import argparse
 import itertools
 import os
 import json
+from dataclasses import dataclass, field, asdict
+from typing import Optional, Type, Any
+from enum import Enum
 
-from dictionary_learning.training import trainSAE
-from dictionary_learning.trainers.standard import StandardTrainer
-from dictionary_learning.trainers.top_k import TrainerTopK, AutoEncoderTopK
-from dictionary_learning.trainers.gdm import GatedSAETrainer
-from dictionary_learning.trainers.p_anneal import PAnnealTrainer
-from dictionary_learning.trainers.jumprelu import JumpReluTrainer
-from dictionary_learning.utils import hf_dataset_to_generator
-from dictionary_learning.buffer import ActivationBuffer
-from dictionary_learning.dictionary import AutoEncoder, GatedAutoEncoder, AutoEncoderNew, JumpReluAutoEncoder
-from dictionary_learning.evaluation import evaluate
-import dictionary_learning.utils as utils
+from training import trainSAE
+from trainers.standard import StandardTrainer
+from trainers.top_k import TopKTrainer, AutoEncoderTopK
+from trainers.gdm import GatedSAETrainer
+from trainers.p_anneal import PAnnealTrainer
+from trainers.jumprelu import JumpReluTrainer
+from utils import hf_dataset_to_generator
+from buffer import ActivationBuffer
+from dictionary import AutoEncoder, GatedAutoEncoder, AutoEncoderNew, JumpReluAutoEncoder
+from evaluation import evaluate
+import utils as utils
 
 
-DEVICE = "cuda:0"
+class TrainerType(Enum):
+    STANDARD = "standard"
+    STANDARD_NEW = "standard_new"
+    TOP_K = "top_k"
+    BATCH_TOP_K = "batch_top_k"
+    GATED = "gated"
+    P_ANNEAL = "p_anneal"
+    JUMP_RELU = "jump_relu"
+
+
+@dataclass
+class LLMConfig:
+    llm_batch_size: int
+    context_length: int
+    sae_batch_size: int
+    dtype: t.dtype
+
+
+@dataclass
+class SparsityPenalties:
+    standard: list[float]
+    p_anneal: list[float]
+    gated: list[float]
+
+
+# TODO: Move all of these to a config file
+num_tokens = 50_000_000
+eval_num_inputs = 1_000
+random_seeds = [0]
+expansion_factors = [8]
+
+# note: learning rate is not used for topk
+learning_rates = [3e-4]
 
 LLM_CONFIG = {
-    "EleutherAI/pythia-70m-deduped": {
-        "llm_batch_size": 512,
-        "context_length": 128,
-        "sae_batch_size": 4096,
-        "dtype": t.float32,
-    },
-    "google/gemma-2-2b": {
-        "llm_batch_size": 32,
-        "context_length": 128,
-        "sae_batch_size": 2048,
-        "dtype": t.bfloat16,
-    },
+    "EleutherAI/pythia-70m-deduped": LLMConfig(
+        llm_batch_size=512, context_length=128, sae_batch_size=4096, dtype=t.float32
+    ),
+    "google/gemma-2-2b": LLMConfig(
+        llm_batch_size=32, context_length=128, sae_batch_size=2048, dtype=t.bfloat16
+    ),
 }
 
+
+# NOTE: In the current setup, the length of each sparsity penalty and target_l0 should be the same
 SPARSITY_PENALTIES = {
-    "EleutherAI/pythia-70m-deduped": {
-        "standard": [0.01, 0.05, 0.075, 0.1, 0.125, 0.15],
-        "p_anneal": [0.02, 0.03, 0.035, 0.04, 0.05, 0.075],
-        "gated": [0.1, 0.3, 0.5, 0.7, 0.9, 1.1],
-    },
-    "google/gemma-2-2b": {
-        "standard": [0.025, 0.035, 0.04, 0.05, 0.06, 0.07],
-        "p_anneal": [-1, -1, -1, -1, -1, -1],
-        "gated": [-1, -1, -1, -1, -1, -1],
-    },
+    "EleutherAI/pythia-70m-deduped": SparsityPenalties(
+        standard=[0.01, 0.05, 0.075, 0.1, 0.125, 0.15],
+        p_anneal=[0.02, 0.03, 0.035, 0.04, 0.05, 0.075],
+        gated=[0.1, 0.3, 0.5, 0.7, 0.9, 1.1],
+    ),
+    "google/gemma-2-2b": SparsityPenalties(
+        standard=[0.025, 0.035, 0.04, 0.05, 0.06, 0.07],
+        p_anneal=[-1] * 6,
+        gated=[-1] * 6,
+    ),
 }
+
+
+TARGET_L0s = [20, 40, 80, 160, 320, 640]
+
+
+@dataclass
+class BaseTrainerConfig:
+    activation_dim: int
+    dict_size: int
+    seed: int
+    device: str
+    layer: str
+    lm_name: str
+    submodule_name: str
+    trainer: Type[Any]
+    dict_class: Type[Any]
+    wandb_name: str
+    steps: Optional[int] = None
+
+
+@dataclass
+class WarmupConfig:
+    warmup_steps: int = 1000
+    resample_steps: Optional[int] = None
+
+
+@dataclass
+class StandardTrainerConfig(BaseTrainerConfig, WarmupConfig):
+    lr: float
+    l1_penalty: float
+
+
+@dataclass
+class StandardNewTrainerConfig(BaseTrainerConfig, WarmupConfig):
+    lr: float
+    l1_penalty: float
+
+
+@dataclass
+class PAnnealTrainerConfig(BaseTrainerConfig, WarmupConfig):
+    lr: float
+    initial_sparsity_penalty: float
+    sparsity_function: str = "Lp^p"
+    p_start: float = 1.0
+    p_end: float = 0.2
+    anneal_start: int = 10000
+    anneal_end: Optional[int] = None
+    sparsity_queue_length: int = 10
+    n_sparsity_updates: int = 10
+
+
+@dataclass
+class TopKTrainerConfig(BaseTrainerConfig):
+    k: int
+    auxk_alpha: float = 1 / 32
+    decay_start: int = 24000
+    threshold_beta: float = 0.999
+
+
+@dataclass
+class GatedTrainerConfig(BaseTrainerConfig, WarmupConfig):
+    lr: float
+    l1_penalty: float
+
+
+@dataclass
+class JumpReluTrainerConfig(BaseTrainerConfig):
+    lr: float
+    target_l0: int
+    sparsity_penalty: float = 1.0
+    bandwidth: float = 0.001
+
+
+def get_trainer_configs(
+    architectures: list[str],
+    learning_rate: float,
+    sparsity_index: int,
+    seed: int,
+    activation_dim: int,
+    dict_size: int,
+    model_name: str,
+    device: str,
+    layer: str,
+    submodule_name: str,
+    steps: int,
+) -> list[dict]:
+    trainer_configs = []
+
+    base_config = {
+        "activation_dim": activation_dim,
+        "dict_size": dict_size,
+        "seed": seed,
+        "device": device,
+        "layer": layer,
+        "lm_name": model_name,
+        "submodule_name": submodule_name,
+    }
+
+    if TrainerType.P_ANNEAL.value in architectures:
+        config = PAnnealTrainerConfig(
+            **base_config,
+            trainer=PAnnealTrainer,
+            dict_class=AutoEncoder,
+            lr=learning_rate,
+            initial_sparsity_penalty=SPARSITY_PENALTIES[model_name].p_anneal[sparsity_index],
+            steps=steps,
+            wandb_name=f"PAnnealTrainer-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    if TrainerType.STANDARD.value in architectures:
+        config = StandardTrainerConfig(
+            **base_config,
+            trainer=StandardTrainer,
+            dict_class=AutoEncoder,
+            lr=learning_rate,
+            l1_penalty=SPARSITY_PENALTIES[model_name].standard[sparsity_index],
+            wandb_name=f"StandardTrainer-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    if TrainerType.STANDARD_NEW.value in architectures:
+        config = StandardNewTrainerConfig(
+            **base_config,
+            trainer=StandardTrainer,
+            dict_class=AutoEncoderNew,
+            lr=learning_rate,
+            l1_penalty=SPARSITY_PENALTIES[model_name].standard[sparsity_index],
+            wandb_name=f"StandardTrainerNew-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    if TrainerType.TOP_K.value in architectures:
+        config = TopKTrainerConfig(
+            **base_config,
+            trainer=TopKTrainer,
+            dict_class=AutoEncoderTopK,
+            k=TARGET_L0s[sparsity_index],
+            steps=steps,
+            wandb_name=f"TopKTrainer-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    if TrainerType.GATED.value in architectures:
+        config = GatedTrainerConfig(
+            **base_config,
+            trainer=GatedSAETrainer,
+            dict_class=GatedAutoEncoder,
+            lr=learning_rate,
+            l1_penalty=SPARSITY_PENALTIES[model_name].gated[sparsity_index],
+            wandb_name=f"GatedTrainer-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    if TrainerType.JUMP_RELU.value in architectures:
+        config = JumpReluTrainerConfig(
+            **base_config,
+            trainer=JumpReluTrainer,
+            dict_class=JumpReluAutoEncoder,
+            lr=learning_rate,
+            target_l0=TARGET_L0s[sparsity_index],
+            wandb_name=f"JumpReluTrainer-{model_name}-{submodule_name}",
+        )
+        trainer_configs.append(asdict(config))
+
+    return trainer_configs
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -66,7 +264,7 @@ def get_args():
         "--architectures",
         type=str,
         nargs="+",
-        choices=["standard", "standard_new", "top_k", "gated", "p_anneal", "jump_relu"],
+        choices=[e.value for e in TrainerType],
         required=True,
         help="which SAE architectures to train",
     )
@@ -80,9 +278,14 @@ def run_sae_training(
     save_dir: str,
     device: str,
     architectures: list,
+    num_tokens: int,
+    random_seeds: list[int],
+    expansion_factors: list[float],
+    learning_rates: list[float],
     dry_run: bool = False,
     use_wandb: bool = False,
     save_checkpoints: bool = False,
+    buffer_scaling_factor: int = 20,
 ):
     # model and data parameters
     context_length = LLM_CONFIG[model_name]["context_length"]
@@ -90,50 +293,17 @@ def run_sae_training(
     llm_batch_size = LLM_CONFIG[model_name]["llm_batch_size"]
     sae_batch_size = LLM_CONFIG[model_name]["sae_batch_size"]
     dtype = LLM_CONFIG[model_name]["dtype"]
-    num_tokens = 50_000_000
 
     num_contexts_per_sae_batch = sae_batch_size // context_length
-    buffer_size = num_contexts_per_sae_batch * 20
+    buffer_size = num_contexts_per_sae_batch * buffer_scaling_factor
 
     # sae training parameters
     # random_seeds = t.arange(10).tolist()
-    random_seeds = [0]
-    expansion_factors = [8]
 
-    num_sparsities = 6
+    num_sparsities = len(TARGET_L0s)
     sparsity_indices = t.arange(num_sparsities).tolist()
-    standard_sparsity_penalties = SPARSITY_PENALTIES[model_name]["standard"]
-    p_anneal_sparsity_penalties = SPARSITY_PENALTIES[model_name]["p_anneal"]
-    gated_sparsity_penalties = SPARSITY_PENALTIES[model_name]["gated"]
-    ks = [20, 40, 80, 160, 320, 640]
-
-    assert len(standard_sparsity_penalties) == num_sparsities
-    assert len(p_anneal_sparsity_penalties) == num_sparsities
-    assert len(gated_sparsity_penalties) == num_sparsities
-    assert len(ks) == num_sparsities
 
     steps = int(num_tokens / sae_batch_size)  # Total number of batches to train
-    warmup_steps = 1000  # Warmup period at start of training and after each resample
-    resample_steps = None
-
-    # note: learning rate is not used for topk
-    learning_rates = [3e-4]
-
-    # topk sae training parameters
-    decay_start = 24000
-    auxk_alpha = 1 / 32
-
-    # p_anneal sae training parameters
-    p_start = 1
-    p_end = 0.2
-    anneal_end = None  # steps - int(steps/10)
-    sparsity_queue_length = 10
-    anneal_start = 10000
-    n_sparsity_updates = 10
-
-    # jumprelu sae training parameters
-    jumprelu_bandwidth = 0.001
-    jumprelu_sparsity_penalty = 1.0 # per figure 9 in the paper
 
     if save_checkpoints:
         # Creates checkpoints at 0.1%, 0.316%, 1%, 3.16%, 10%, 31.6%, 100% of training
@@ -152,7 +322,7 @@ def run_sae_training(
     if not use_wandb:
         log_steps = None
 
-    model = LanguageModel(model_name, dispatch=True, device_map=DEVICE)
+    model = LanguageModel(model_name, dispatch=True, device_map=device)
     model = model.to(dtype=dtype)
     submodule = utils.get_submodule(model, layer)
     submodule_name = f"resid_post_layer_{layer}"
@@ -180,128 +350,21 @@ def run_sae_training(
     for seed, sparsity_index, expansion_factor, learning_rate in itertools.product(
         random_seeds, sparsity_indices, expansion_factors, learning_rates
     ):
-        if "p_anneal" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": PAnnealTrainer,
-                    "dict_class": AutoEncoder,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "lr": learning_rate,
-                    "sparsity_function": "Lp^p",
-                    "initial_sparsity_penalty": p_anneal_sparsity_penalties[sparsity_index],
-                    "p_start": p_start,
-                    "p_end": p_end,
-                    "anneal_start": int(anneal_start),
-                    "anneal_end": anneal_end,
-                    "sparsity_queue_length": sparsity_queue_length,
-                    "n_sparsity_updates": n_sparsity_updates,
-                    "warmup_steps": warmup_steps,
-                    "resample_steps": resample_steps,
-                    "steps": steps,
-                    "seed": seed,
-                    "wandb_name": f"PAnnealTrainer-pythia70m-{layer}",
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "device": device,
-                    "submodule_name": submodule_name,
-                },
+        dict_size = int(expansion_factor * activation_dim)
+        trainer_configs.extend(
+            get_trainer_configs(
+                architectures,
+                learning_rate,
+                sparsity_index,
+                seed,
+                activation_dim,
+                dict_size,
+                model_name,
+                device,
+                submodule_name,
+                steps,
             )
-        if "standard" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": StandardTrainer,
-                    "dict_class": AutoEncoder,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "lr": learning_rate,
-                    "l1_penalty": standard_sparsity_penalties[sparsity_index],
-                    "warmup_steps": warmup_steps,
-                    "resample_steps": resample_steps,
-                    "seed": seed,
-                    "wandb_name": f"StandardTrainer-{model_name}-{submodule_name}",
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "device": device,
-                    "submodule_name": submodule_name,
-                }
-            )
-        if "standard_new" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": StandardTrainer,
-                    "dict_class": AutoEncoderNew,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "lr": learning_rate,
-                    "l1_penalty": standard_sparsity_penalties[sparsity_index],
-                    "warmup_steps": warmup_steps,
-                    "resample_steps": resample_steps,
-                    "seed": seed,
-                    "wandb_name": f"StandardTrainerNew-{model_name}-{submodule_name}",
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "device": device,
-                    "submodule_name": submodule_name,
-                }
-            )
-        if "top_k" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": TrainerTopK,
-                    "dict_class": AutoEncoderTopK,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "k": ks[sparsity_index],
-                    "auxk_alpha": auxk_alpha,  # see Appendix A.2
-                    "decay_start": decay_start,  # when does the lr decay start
-                    "steps": steps,  # when when does training end
-                    "seed": seed,
-                    "wandb_name": f"TopKTrainer-{model_name}-{submodule_name}",
-                    "device": device,
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "submodule_name": submodule_name,
-                }
-            )
-        if "gated" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": GatedSAETrainer,
-                    "dict_class": GatedAutoEncoder,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "lr": learning_rate,
-                    "l1_penalty": gated_sparsity_penalties[sparsity_index],
-                    "warmup_steps": warmup_steps,
-                    "resample_steps": resample_steps,
-                    "seed": seed,
-                    "wandb_name": f"GatedSAETrainer-{model_name}-{submodule_name}",
-                    "device": device,
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "submodule_name": submodule_name,
-                }
-            )
-        if "jump_relu" in architectures:
-            trainer_configs.append(
-                {
-                    "trainer": JumpReluTrainer,
-                    "dict_class": JumpReluAutoEncoder,
-                    "activation_dim": activation_dim,
-                    "dict_size": expansion_factor * activation_dim,
-                    "lr": learning_rate,
-                    "target_l0": ks[sparsity_index],
-                    "sparsity_penalty": jumprelu_sparsity_penalty,
-                    "bandwidth": jumprelu_bandwidth,
-                    "seed": seed,
-                    "wandb_name": f"JumpReLUSAETrainer-{model_name}-{submodule_name}",
-                    "device": device,
-                    "layer": layer,
-                    "lm_name": model_name,
-                    "submodule_name": submodule_name,
-                }
-            )
+        )
 
     print(f"len trainer configs: {len(trainer_configs)}")
     save_dir = f"{save_dir}/{submodule_name}"
@@ -318,6 +381,7 @@ def run_sae_training(
             log_steps=log_steps,
         )
 
+
 @t.no_grad()
 def eval_saes(
     model_name: str,
@@ -327,7 +391,6 @@ def eval_saes(
     overwrite_prev_results: bool = False,
     transcoder: bool = False,
 ) -> dict:
-
     if transcoder:
         io = "in_and_out"
     else:
@@ -339,7 +402,7 @@ def eval_saes(
     sae_batch_size = loss_recovered_batch_size * context_length
     dtype = LLM_CONFIG[model_name]["dtype"]
 
-    model = LanguageModel(model_name, dispatch=True, device_map=DEVICE)
+    model = LanguageModel(model_name, dispatch=True, device_map=device)
     model = model.to(dtype=dtype)
 
     buffer_size = n_inputs
@@ -414,19 +477,24 @@ if __name__ == "__main__":
     python pythia.py --save_dir ./run3 --model_name google/gemma-2-2b --layers 12 --architectures standard top_k --use_wandb
     python pythia.py --save_dir ./jumprelu --model_name EleutherAI/pythia-70m-deduped --layers 3 --architectures jump_relu --use_wandb"""
     args = get_args()
+
+    device = "cuda:0"
+
     for layer in args.layers:
         run_sae_training(
             model_name=args.model_name,
             layer=layer,
             save_dir=args.save_dir,
-            device="cuda:0",
+            device=device,
             architectures=args.architectures,
+            num_tokens=num_tokens,
+            random_seeds=random_seeds,
+            expansion_factors=expansion_factors,
+            learning_rates=learning_rates,
             dry_run=args.dry_run,
             use_wandb=args.use_wandb,
         )
 
     ae_paths = utils.get_nested_folders(args.save_dir)
 
-    eval_saes(args.model_name, ae_paths, 1000, DEVICE)
-
-    
+    eval_saes(args.model_name, ae_paths, eval_num_inputs, device)
