@@ -16,7 +16,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
         self.register_buffer("k", t.tensor(k))
-        self.register_buffer("threshold", None)
+        self.register_buffer("threshold", t.tensor(-1.0))
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
@@ -109,6 +109,7 @@ class BatchTopKTrainer(SAETrainer):
         auxk_alpha=1 / 32,
         decay_start=24000,
         threshold_beta=0.999,
+        threshold_start_step=1000,
         steps=30000,
         top_k_aux=512,
         seed=None,
@@ -127,6 +128,7 @@ class BatchTopKTrainer(SAETrainer):
         self.steps = steps
         self.k = k
         self.threshold_beta = threshold_beta
+        self.threshold_start_step = threshold_start_step
 
         if seed is not None:
             t.manual_seed(seed)
@@ -185,21 +187,21 @@ class BatchTopKTrainer(SAETrainer):
         f, active_indices = self.ae.encode(x, return_active=True, use_threshold=False)
         # l0 = (f != 0).float().sum(dim=-1).mean().item()
 
-        active = f[f > 0]
+        if step > self.threshold_start_step:
+            with t.no_grad():
+                active = f[f > 0]
 
-        if active.size(0) == 0:
-            min_activation = 0.0
-        else:
-            min_activation = active.min()
+                if active.size(0) == 0:
+                    min_activation = 0.0
+                else:
+                    min_activation = active.min().detach()
 
-        print(f"min_activation: {min_activation}")
-
-        if self.threshold is None:
-            self.threshold = min_activation
-        else:
-            self.threshold = (self.threshold_beta * self.threshold) + (
-                (1 - self.threshold_beta) * min_activation
-            )
+                if self.ae.threshold < 0:
+                    self.ae.threshold = min_activation
+                else:
+                    self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
+                        (1 - self.threshold_beta) * min_activation
+                    )
 
         x_hat = self.ae.decode(f)
 
@@ -252,14 +254,14 @@ class BatchTopKTrainer(SAETrainer):
     @property
     def config(self):
         return {
-            "trainer_class": "TrainerBatchTopK",
+            "trainer_class": "BatchTopKTrainer",
             "dict_class": "BatchTopKSAE",
             "lr": self.lr,
             "steps": self.steps,
             "seed": self.seed,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
-            "k": self.ae.k,
+            "k": self.ae.k.item(),
             "device": self.device,
             "layer": self.layer,
             "lm_name": self.lm_name,

@@ -6,7 +6,7 @@ import random
 
 from dictionary_learning.training import trainSAE
 from dictionary_learning.trainers.standard import StandardTrainer
-from dictionary_learning.trainers.top_k import TrainerTopK, AutoEncoderTopK
+from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
 from dictionary_learning.utils import hf_dataset_to_generator, get_nested_folders, load_dictionary
 from dictionary_learning.buffer import ActivationBuffer
 from dictionary_learning.dictionary import (
@@ -119,7 +119,7 @@ def test_sae_training():
     trainer_configs.extend(
         [
             {
-                "trainer": TrainerTopK,
+                "trainer": TopKTrainer,
                 "dict_class": AutoEncoderTopK,
                 "activation_dim": activation_dim,
                 "dict_size": expansion_factor * activation_dim,

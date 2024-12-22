@@ -7,6 +7,7 @@ import einops
 import torch as t
 import torch.nn as nn
 from collections import namedtuple
+from typing import Optional
 
 from ..config import DEBUG
 from ..dictionary import Dictionary
@@ -58,7 +59,10 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.k = k
+
+        assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
+        self.register_buffer("k", t.tensor(k))
+        self.register_buffer("threshold", t.tensor(-1.0))
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.bias.data.zero_()
@@ -69,8 +73,17 @@ class AutoEncoderTopK(Dictionary, nn.Module):
 
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-    def encode(self, x: t.Tensor, return_topk: bool = False):
+    def encode(self, x: t.Tensor, return_topk: bool = False, use_threshold: bool = False):
         post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
+
+        if use_threshold:
+            encoded_acts_BF = post_relu_feat_acts_BF * (post_relu_feat_acts_BF > self.threshold)
+            if return_topk:
+                post_topk = post_relu_feat_acts_BF.topk(self.k, sorted=False, dim=-1)
+                return encoded_acts_BF, post_topk.values, post_topk.indices
+            else:
+                return encoded_acts_BF
+
         post_topk = post_relu_feat_acts_BF.topk(self.k, sorted=False, dim=-1)
 
         # We can't split immediately due to nnsight
@@ -117,12 +130,18 @@ class AutoEncoderTopK(Dictionary, nn.Module):
             "d_sae, d_in d_sae -> d_in d_sae",
         )
 
-    def from_pretrained(path, k: int, device=None):
+    def from_pretrained(path, k: Optional[int] = None, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
+
+        if k is None:
+            k = state_dict["k"].item()
+        elif "k" in state_dict and k != state_dict["k"].item():
+            raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
+
         autoencoder = AutoEncoderTopK(activation_dim, dict_size, k)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
@@ -143,6 +162,8 @@ class TopKTrainer(SAETrainer):
         k=100,
         auxk_alpha=1 / 32,  # see Appendix A.2
         decay_start=24000,  # when does the lr decay start
+        threshold_beta=0.999,
+        threshold_start_step=1000,
         steps=30000,  # when when does training end
         seed=None,
         device=None,
@@ -161,6 +182,9 @@ class TopKTrainer(SAETrainer):
         self.wandb_name = wandb_name
         self.steps = steps
         self.k = k
+        self.threshold_beta = threshold_beta
+        self.threshold_start_step = threshold_start_step
+
         if seed is not None:
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
@@ -201,7 +225,26 @@ class TopKTrainer(SAETrainer):
 
     def loss(self, x, step=None, logging=False):
         # Run the SAE
-        f, top_acts, top_indices = self.ae.encode(x, return_topk=True)
+        f, top_acts, top_indices = self.ae.encode(x, return_topk=True, use_threshold=False)
+
+        if step > self.threshold_start_step:
+            with t.no_grad():
+                active = top_acts.clone().detach()
+                active[active <= 0] = float("inf")
+                min_activations = active.min(dim=1).values
+                min_activation = min_activations.mean()
+
+                B, K = active.shape
+                assert len(active.shape) == 2
+                assert min_activations.shape == (B,)
+
+                if self.ae.threshold < 0:
+                    self.ae.threshold = min_activation
+                else:
+                    self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
+                        (1 - self.threshold_beta) * min_activation
+                    )
+
         x_hat = self.ae.decode(f)
 
         # Measure goodness of reconstruction
@@ -293,14 +336,14 @@ class TopKTrainer(SAETrainer):
     @property
     def config(self):
         return {
-            "trainer_class": "TrainerTopK",
+            "trainer_class": "TopKTrainer",
             "dict_class": "AutoEncoderTopK",
             "lr": self.lr,
             "steps": self.steps,
             "seed": self.seed,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
-            "k": self.ae.k,
+            "k": self.ae.k.item(),
             "device": self.device,
             "layer": self.layer,
             "lm_name": self.lm_name,
