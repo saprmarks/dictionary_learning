@@ -136,7 +136,7 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
-        loss = recon_loss + self.l1_penalty * sparsity_warmup * l1_loss
+        loss = recon_loss + self.l1_penalty * l1_loss
 
         if not logging:
             return loss
