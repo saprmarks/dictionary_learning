@@ -166,7 +166,7 @@ class PAnnealTrainer(SAETrainer):
     def loss(self, x, step, logging=False):
         # Compute loss terms
         x_hat, f = self.ae(x, output_features=True)
-        l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
+        recon_loss = (x - x_hat).pow(2).sum(dim=-1).mean()
         lp_loss = self.lp_norm(f, self.p)
         scaled_lp_loss = lp_loss * self.sparsity_coeff
         self.lp_loss = lp_loss
@@ -201,7 +201,7 @@ class PAnnealTrainer(SAETrainer):
             self.steps_since_active[~deads] = 0        
     
         if logging is False:
-            return l2_loss + scaled_lp_loss
+            return recon_loss + scaled_lp_loss
         else: 
             loss_log = {
                 'p' : self.p,
