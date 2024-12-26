@@ -130,6 +130,10 @@ class AutoEncoderTopK(Dictionary, nn.Module):
             "d_sae, d_in d_sae -> d_in d_sae",
         )
 
+    def scale_biases(self, scale: float):
+        self.encoder.bias.data *= scale
+        self.b_dec.data *= scale
+
     def from_pretrained(path, k: Optional[int] = None, device=None):
         """
         Load a pretrained autoencoder from a file.

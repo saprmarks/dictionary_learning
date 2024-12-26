@@ -83,6 +83,10 @@ class BatchTopKSAE(Dictionary, nn.Module):
             "d_sae, d_in d_sae -> d_in d_sae",
         )
 
+    def scale_biases(self, scale: float):
+        self.encoder.bias.data *= scale
+        self.b_dec.data *= scale
+
     @classmethod
     def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":
         state_dict = t.load(path)

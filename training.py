@@ -77,11 +77,14 @@ def get_norm_factor(data, steps: int) -> float:
     """Per Section 3.1, find a fixed scalar factor so activation vectors have unit mean squared norm.
     This is very helpful for hyperparameter transfer between different layers and models.
     Use more steps for more accurate results.
-    https://arxiv.org/pdf/2408.05147"""
+    https://arxiv.org/pdf/2408.05147
+    
+    If experiencing troubles with hyperparameter transfer between models, it may be worth instead normalizing to the square root of d_model.
+    https://transformer-circuits.pub/2024/april-update/index.html#training-saes"""
     total_mean_squared_norm = 0
     count = 0
 
-    for step, act_BD in enumerate(tqdm(data, total=steps)):
+    for step, act_BD in enumerate(tqdm(data, total=steps, desc="Calculating norm factor")):
         if step > steps:
             break
 
