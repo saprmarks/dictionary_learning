@@ -6,8 +6,8 @@ import random
 
 from dictionary_learning.training import trainSAE
 from dictionary_learning.trainers.standard import StandardTrainer
-from dictionary_learning.trainers.top_k import TrainerTopK, AutoEncoderTopK
-from dictionary_learning.utils import hf_dataset_to_generator
+from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
+from dictionary_learning.utils import hf_dataset_to_generator, get_nested_folders, load_dictionary
 from dictionary_learning.buffer import ActivationBuffer
 from dictionary_learning.dictionary import (
     AutoEncoder,
@@ -58,50 +58,11 @@ DATASET_NAME = "monology/pile-uncopyrighted"
 EVAL_TOLERANCE = 0.01
 
 
-def get_nested_folders(path: str) -> list[str]:
-    """
-    Recursively get a list of folders that contain an ae.pt file, starting the search from the given path
-    """
-    folder_names = []
-
-    for root, dirs, files in os.walk(path):
-        if "ae.pt" in files:
-            folder_names.append(root)
-
-    return folder_names
-
-
-def load_dictionary(base_path: str, device: str) -> tuple:
-    ae_path = f"{base_path}/ae.pt"
-    config_path = f"{base_path}/config.json"
-
-    with open(config_path, "r") as f:
-        config = json.load(f)
-
-    # TODO: Save the submodule name in the config?
-    # submodule_str = config["trainer"]["submodule_name"]
-    dict_class = config["trainer"]["dict_class"]
-
-    if dict_class == "AutoEncoder":
-        dictionary = AutoEncoder.from_pretrained(ae_path, device=device)
-    elif dict_class == "GatedAutoEncoder":
-        dictionary = GatedAutoEncoder.from_pretrained(ae_path, device=device)
-    elif dict_class == "AutoEncoderNew":
-        dictionary = AutoEncoderNew.from_pretrained(ae_path, device=device)
-    elif dict_class == "AutoEncoderTopK":
-        k = config["trainer"]["k"]
-        dictionary = AutoEncoderTopK.from_pretrained(ae_path, k=k, device=device)
-    elif dict_class == "JumpReluAutoEncoder":
-        dictionary = JumpReluAutoEncoder.from_pretrained(ae_path, device=device)
-    else:
-        raise ValueError(f"Dictionary class {dict_class} not supported")
-
-    return dictionary, config
-
-
 def test_sae_training():
     """End to end test for training an SAE. Takes ~2 minutes on an RTX 3090.
-    This isn't a nice suite of unit tests, but it's better than nothing."""
+    This isn't a nice suite of unit tests, but it's better than nothing.
+    I have observed that results can slightly vary with library versions. For full determinism,
+    use pytorch 2.2.0 and nnsight 0.3.3."""
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
 
@@ -158,7 +119,7 @@ def test_sae_training():
     trainer_configs.extend(
         [
             {
-                "trainer": TrainerTopK,
+                "trainer": TopKTrainer,
                 "dict_class": AutoEncoderTopK,
                 "activation_dim": activation_dim,
                 "dict_size": expansion_factor * activation_dim,
@@ -278,5 +239,12 @@ def test_evaluation():
         dict_class = config["trainer"]["dict_class"]
         expected_results = EXPECTED_RESULTS[dict_class]
 
+        max_diff = 0
+        max_diff_percent = 0
         for key, value in expected_results.items():
-            assert abs(eval_results[key] - value) < EVAL_TOLERANCE
+            diff = abs(eval_results[key] - value)
+            max_diff = max(max_diff, diff)
+            max_diff_percent = max(max_diff_percent, diff / value)
+
+        print(f"Max diff: {max_diff}, max diff %: {max_diff_percent}")
+        assert max_diff < EVAL_TOLERANCE

@@ -47,12 +47,16 @@ class AutoEncoder(Dictionary, nn.Module):
         self.dict_size = dict_size
         self.bias = nn.Parameter(t.zeros(activation_dim))
         self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
-
-        # rows of decoder weight matrix are unit vectors
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        dec_weight = t.randn_like(self.decoder.weight)
-        dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
-        self.decoder.weight = nn.Parameter(dec_weight)
+
+        # initialize encoder and decoder weights
+        w = t.randn(activation_dim, dict_size)
+        ## normalize columns of w
+        w = w / w.norm(dim=0, keepdim=True) * 0.1
+        ## set encoder and decoder weights
+        self.encoder.weight = nn.Parameter(w.clone().T)
+        self.decoder.weight = nn.Parameter(w.clone())
+        
 
     def encode(self, x):
         return nn.ReLU()(self.encoder(x - self.bias))
@@ -86,6 +90,10 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
+
+    def scale_biases(self, scale: float):
+        self.encoder.bias.data *= scale
+        self.bias.data *= scale
     
     @classmethod
     def from_pretrained(cls, path, dtype=t.float, device=None):
@@ -204,6 +212,11 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         else:
             return x_hat
 
+    def scale_biases(self, scale: float):
+        self.decoder_bias.data *= scale
+        self.mag_bias.data *= scale
+        self.gate_bias.data *= scale
+
     def from_pretrained(path, device=None):
         """
         Load a pretrained autoencoder from a file.
@@ -215,6 +228,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+
     
 class JumpReluAutoEncoder(Dictionary, nn.Module):
     """
@@ -267,6 +281,11 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
+
+    def scale_biases(self, scale: float):
+        self.b_dec.data *= scale
+        self.b_enc.data *= scale
+        self.threshold.data *= scale
     
     @classmethod
     def from_pretrained(
@@ -284,9 +303,10 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         """
         if not load_from_sae_lens:
             state_dict = t.load(path)
-            dict_size, activation_dim = state_dict['W_enc'].shape
+            activation_dim, dict_size = state_dict['W_enc'].shape
             autoencoder = JumpReluAutoEncoder(activation_dim, dict_size)
             autoencoder.load_state_dict(state_dict)
+            autoencoder = autoencoder.to(dtype=dtype, device=device)
         else:
             from sae_lens import SAE
             sae, cfg_dict, _ = SAE.from_pretrained(**kwargs)

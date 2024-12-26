@@ -40,7 +40,7 @@ class ActivationBuffer:
                     d_submodule = submodule.out_features
             except:
                 raise ValueError("d_submodule cannot be inferred and must be specified directly")
-        self.activations = t.empty(0, d_submodule, device=device)
+        self.activations = t.empty(0, d_submodule, device=device, dtype=model.dtype)
         self.read = t.zeros(0).bool()
 
         self.data = data
@@ -105,7 +105,7 @@ class ActivationBuffer:
         self.activations = self.activations[~self.read]
 
         current_idx = len(self.activations)
-        new_activations = t.empty(self.activation_buffer_size, self.d_submodule, device=self.device)
+        new_activations = t.empty(self.activation_buffer_size, self.d_submodule, device=self.device, dtype=self.model.dtype)
 
         new_activations[: len(self.activations)] = self.activations
         self.activations = new_activations
