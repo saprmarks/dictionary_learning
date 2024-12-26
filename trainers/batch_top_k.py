@@ -86,6 +86,8 @@ class BatchTopKSAE(Dictionary, nn.Module):
     def scale_biases(self, scale: float):
         self.encoder.bias.data *= scale
         self.b_dec.data *= scale
+        if self.threshold >= 0:
+            self.threshold *= scale
 
     @classmethod
     def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":

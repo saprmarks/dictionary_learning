@@ -133,6 +133,8 @@ class AutoEncoderTopK(Dictionary, nn.Module):
     def scale_biases(self, scale: float):
         self.encoder.bias.data *= scale
         self.b_dec.data *= scale
+        if self.threshold >= 0:
+            self.threshold *= scale
 
     def from_pretrained(path, k: Optional[int] = None, device=None):
         """
