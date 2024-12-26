@@ -313,6 +313,7 @@ class TopKTrainer(SAETrainer):
         # Initialise the decoder bias
         if step == 0:
             median = geometric_median(x)
+            median = median.to(self.ae.b_dec.dtype)
             self.ae.b_dec.data = median
 
         # Make sure the decoder is still unit-norm
