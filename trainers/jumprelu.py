@@ -168,4 +168,7 @@ class JumpReluTrainer(nn.Module, SAETrainer):
             "lm_name": self.lm_name,
             "wandb_name": self.wandb_name,
             "submodule_name": self.submodule_name,
+            "bandwidth": self.bandwidth,
+            "sparsity_penalty": self.sparsity_coefficient,
+            "target_l0": self.target_l0,
         }

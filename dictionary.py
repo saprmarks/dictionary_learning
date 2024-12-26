@@ -86,6 +86,10 @@ class AutoEncoder(Dictionary, nn.Module):
                 return x_hat, x_ghost, f
             else:
                 return x_hat, x_ghost
+
+    def scale_biases(self, scale: float):
+        self.encoder.bias.data *= scale
+        self.bias.data *= scale
     
     @classmethod
     def from_pretrained(cls, path, dtype=t.float, device=None):
@@ -204,6 +208,11 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         else:
             return x_hat
 
+    def scale_biases(self, scale: float):
+        self.decoder_bias.data *= scale
+        self.mag_bias.data *= scale
+        self.gate_bias.data *= scale
+
     def from_pretrained(path, device=None):
         """
         Load a pretrained autoencoder from a file.
@@ -215,6 +224,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             autoencoder.to(device)
         return autoencoder
+
     
 class JumpReluAutoEncoder(Dictionary, nn.Module):
     """
@@ -267,6 +277,11 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             return x_hat, f
         else:
             return x_hat
+
+    def scale_biases(self, scale: float):
+        self.b_dec.data *= scale
+        self.b_enc.data *= scale
+        self.threshold.data *= scale
     
     @classmethod
     def from_pretrained(
