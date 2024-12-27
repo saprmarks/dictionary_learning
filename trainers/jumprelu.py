@@ -3,6 +3,7 @@ from collections import namedtuple
 import torch
 import torch.autograd as autograd
 from torch import nn
+from typing import Optional
 
 from ..dictionary import Dictionary, JumpReluAutoEncoder
 from .trainer import SAETrainer
@@ -69,21 +70,22 @@ class JumpReluTrainer(nn.Module, SAETrainer):
     def __init__(
         self,
         dict_class=JumpReluAutoEncoder,
-        activation_dim=512,
-        dict_size=8192,
-        steps=30000,
+        activation_dim: int = 512,
+        dict_size: int = 8192,
+        steps: int = 30000,
         # XXX: Training decay is not implemented
-        seed=None,
+        seed: Optional[int] = None,
         # TODO: What's the default lr use in the paper?
-        lr=7e-5,
-        bandwidth=0.001,
-        sparsity_penalty=1.0,
-        target_l0=20.0,
-        device="cpu",
-        layer=None,
-        lm_name=None,
-        wandb_name="JumpRelu",
-        submodule_name=None,
+        lr: float = 7e-5,
+        bandwidth: float = 0.001,
+        sparsity_penalty: float = 1.0,
+        sparsity_warmup_steps: int = 2000,
+        target_l0: float = 20.0,
+        device: str = "cpu",
+        layer: Optional[int] = None,
+        lm_name: Optional[str] = None,
+        wandb_name: str = "JumpRelu",
+        submodule_name: Optional[str] = None,
     ):
         super().__init__()
 
@@ -100,6 +102,7 @@ class JumpReluTrainer(nn.Module, SAETrainer):
 
         self.bandwidth = bandwidth
         self.sparsity_coefficient = sparsity_penalty
+        self.sparsity_warmup_steps = sparsity_warmup_steps
         self.target_l0 = target_l0
 
         # TODO: Better auto-naming (e.g. in BatchTopK package)
@@ -119,14 +122,20 @@ class JumpReluTrainer(nn.Module, SAETrainer):
 
         self.logging_parameters = []
 
-    def loss(self, x, logging=False, **_):
+    def loss(self, x: torch.Tensor, step: int, logging=False, **_):
+
+        if self.sparsity_warmup_steps is not None:
+            sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
+        else:
+            sparsity_scale = 1.0
+
         f = self.ae.encode(x)
         recon = self.ae.decode(f)
 
         recon_loss = (x - recon).pow(2).sum(dim=-1).mean()
         l0 = StepFunction.apply(f, self.ae.threshold, self.bandwidth).sum(dim=-1).mean()
 
-        sparsity_loss = self.sparsity_coefficient * ((l0 / self.target_l0) - 1).pow(2) 
+        sparsity_loss = self.sparsity_coefficient * ((l0 / self.target_l0) - 1).pow(2) * sparsity_scale
         loss = recon_loss + sparsity_loss
 
         if not logging:
@@ -170,5 +179,6 @@ class JumpReluTrainer(nn.Module, SAETrainer):
             "submodule_name": self.submodule_name,
             "bandwidth": self.bandwidth,
             "sparsity_penalty": self.sparsity_coefficient,
+            "sparsity_warmup_steps": self.sparsity_warmup_steps,
             "target_l0": self.target_l0,
         }
