@@ -149,6 +149,7 @@ def test_sae_training():
                 "lr": learning_rate,
                 "l1_penalty": sparsity_penalty,
                 "warmup_steps": warmup_steps,
+                "sparsity_warmup_steps": None,
                 "resample_steps": resample_steps,
                 "seed": RANDOM_SEED,
                 "wandb_name": f"StandardTrainer-{MODEL_NAME}-{submodule_name}",

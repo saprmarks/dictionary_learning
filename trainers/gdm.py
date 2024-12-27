@@ -3,6 +3,8 @@ Implements the training scheme for a gated SAE described in https://arxiv.org/ab
 """
 
 import torch as t
+from typing import Optional
+
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import GatedAutoEncoder
@@ -33,19 +35,19 @@ class GatedSAETrainer(SAETrainer):
     Gated SAE training scheme.
     """
     def __init__(self,
-                 dict_class=GatedAutoEncoder,
-                 activation_dim=512,
-                 dict_size=64*512,
-                 lr=5e-5, 
-                 l1_penalty=1e-1,
-                 warmup_steps=1000, # lr warmup period at start of training and after each resample
-                 resample_steps=None, # how often to resample neurons
-                 seed=None,
-                 device=None,
-                 layer=None,
-                 lm_name=None,
-                 wandb_name='GatedSAETrainer',
-                 submodule_name=None,
+                 dict_class = GatedAutoEncoder,
+                 activation_dim: int = 512,
+                 dict_size: int = 64*512,
+                 lr: float = 5e-5,
+                 l1_penalty: float = 1e-1,
+                 warmup_steps: int = 1000, # lr warmup period at start of training and after each resample
+                 sparsity_warmup_steps: int = 2000,
+                 seed: Optional[int] = None,
+                 device: Optional[str] = None,
+                 layer: Optional[int] = None,
+                 lm_name: Optional[str] = None,
+                 wandb_name: Optional[str] = 'GatedSAETrainer',
+                 submodule_name: Optional[str] = None,
     ):
         super().__init__(seed)
 
@@ -64,6 +66,7 @@ class GatedSAETrainer(SAETrainer):
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
+        self.sparsity_warmup_steps = sparsity_warmup_steps
         self.wandb_name = wandb_name
 
         if device is None:
@@ -81,7 +84,13 @@ class GatedSAETrainer(SAETrainer):
             return min(1, step / warmup_steps)
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, warmup_fn)
 
-    def loss(self, x, logging=False, **kwargs):
+    def loss(self, x:t.Tensor, step:int, logging:bool=False, **kwargs):
+
+        if self.sparsity_warmup_steps is not None:
+            sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
+        else:
+            sparsity_scale = 1.0
+
         f, f_gate = self.ae.encode(x, return_gate=True)
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
@@ -90,7 +99,7 @@ class GatedSAETrainer(SAETrainer):
         L_sparse = t.linalg.norm(f_gate, ord=1, dim=-1).mean()
         L_aux = (x - x_hat_gate).pow(2).sum(dim=-1).mean()
 
-        loss = L_recon + self.l1_penalty * L_sparse + L_aux
+        loss = L_recon + (self.l1_penalty * L_sparse * sparsity_scale) + L_aux
 
         if not logging:
             return loss
@@ -108,7 +117,7 @@ class GatedSAETrainer(SAETrainer):
     def update(self, step, x):
         x = x.to(self.device)
         self.optimizer.zero_grad()
-        loss = self.loss(x)
+        loss = self.loss(x, step)
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
@@ -123,6 +132,8 @@ class GatedSAETrainer(SAETrainer):
             'lr' : self.lr,
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
+            'sparsity_warmup_steps' : self.sparsity_warmup_steps,
+            'seed' : self.seed,
             'device' : self.device,
             'layer' : self.layer,
             'lm_name' : self.lm_name,

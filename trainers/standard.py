@@ -2,6 +2,8 @@
 Implements the standard SAE training scheme.
 """
 import torch as t
+from typing import Optional
+
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import AutoEncoder
@@ -33,18 +35,19 @@ class StandardTrainer(SAETrainer):
     """
     def __init__(self,
                  dict_class=AutoEncoder,
-                 activation_dim=512,
-                 dict_size=64*512,
-                 lr=1e-3, 
-                 l1_penalty=1e-1,
-                 warmup_steps=1000, # lr warmup period at start of training and after each resample
-                 resample_steps=None, # how often to resample neurons
-                 seed=None,
+                 activation_dim:int=512,
+                 dict_size:int=64*512,
+                 lr:float=1e-3, 
+                 l1_penalty:float=1e-1,
+                 warmup_steps:int=1000, # lr warmup period at start of training and after each resample
+                 sparsity_warmup_steps:Optional[int]=2000, # sparsity warmup period at start of training
+                 resample_steps:Optional[int]=None, # how often to resample neurons
+                 seed:Optional[int]=None,
                  device=None,
-                 layer=None,
-                 lm_name=None,
-                 wandb_name='StandardTrainer',
-                 submodule_name=None,
+                 layer:Optional[int]=None,
+                 lm_name:Optional[str]=None,
+                 wandb_name:Optional[str]='StandardTrainer',
+                 submodule_name:Optional[str]=None,
     ):
         super().__init__(seed)
 
@@ -70,10 +73,10 @@ class StandardTrainer(SAETrainer):
         else:
             self.device = device
         self.ae.to(self.device)
+        
+        self.sparsity_warmup_steps = sparsity_warmup_steps
 
         self.resample_steps = resample_steps
-
-
         if self.resample_steps is not None:
             # how many steps since each neuron was last activated?
             self.steps_since_active = t.zeros(self.ae.dict_size, dtype=int).to(self.device)
@@ -124,7 +127,13 @@ class StandardTrainer(SAETrainer):
             state_dict[3]['exp_avg'][:,deads] = 0.
             state_dict[3]['exp_avg_sq'][:,deads] = 0.
     
-    def loss(self, x, logging=False, **kwargs):
+    def loss(self, x, step: int, logging=False, **kwargs):
+
+        if self.sparsity_warmup_steps is not None:
+            sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
+        else:
+            sparsity_scale = 1.0
+
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
         recon_loss = (x - x_hat).pow(2).sum(dim=-1).mean()
@@ -136,7 +145,7 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
         
-        loss = recon_loss + self.l1_penalty * l1_loss
+        loss = recon_loss + self.l1_penalty * sparsity_scale * l1_loss
 
         if not logging:
             return loss
@@ -156,7 +165,7 @@ class StandardTrainer(SAETrainer):
         activations = activations.to(self.device)
 
         self.optimizer.zero_grad()
-        loss = self.loss(activations)
+        loss = self.loss(activations, step=step)
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
@@ -175,6 +184,8 @@ class StandardTrainer(SAETrainer):
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
+            'sparsity_warmup_steps' : self.sparsity_warmup_steps,
+            'seed' : self.seed,
             'device' : self.device,
             'layer' : self.layer,
             'lm_name' : self.lm_name,
