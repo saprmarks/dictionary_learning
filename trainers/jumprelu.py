@@ -69,21 +69,23 @@ class JumpReluTrainer(nn.Module, SAETrainer):
     """
     def __init__(
         self,
+        steps: int, # total number of steps to train for
+        activation_dim: int,
+        dict_size: int,
+        layer: int,
+        lm_name: str,
         dict_class=JumpReluAutoEncoder,
-        activation_dim: int = 512,
-        dict_size: int = 8192,
-        steps: int = 30000,
         # XXX: Training decay is not implemented
         seed: Optional[int] = None,
         # TODO: What's the default lr use in the paper?
         lr: float = 7e-5,
         bandwidth: float = 0.001,
         sparsity_penalty: float = 1.0,
-        sparsity_warmup_steps: int = 2000,
+        warmup_steps:int=1000, # lr warmup period at start of training and after each resample
+        sparsity_warmup_steps:Optional[int]=2000, # sparsity warmup period at start of training
+        decay_start:Optional[int]=None, # decay learning rate after this many steps
         target_l0: float = 20.0,
         device: str = "cpu",
-        layer: Optional[int] = None,
-        lm_name: Optional[str] = None,
         wandb_name: str = "JumpRelu",
         submodule_name: Optional[str] = None,
     ):
@@ -102,7 +104,9 @@ class JumpReluTrainer(nn.Module, SAETrainer):
 
         self.bandwidth = bandwidth
         self.sparsity_coefficient = sparsity_penalty
+        self.warmup_steps = warmup_steps
         self.sparsity_warmup_steps = sparsity_warmup_steps
+        self.decay_start = decay_start
         self.target_l0 = target_l0
 
         # TODO: Better auto-naming (e.g. in BatchTopK package)
@@ -119,6 +123,28 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         self.optimizer = torch.optim.Adam(
             self.ae.parameters(), lr=lr, betas=(0.0, 0.999), eps=1e-8
         )
+
+        if decay_start is not None:
+            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
+            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
+            if sparsity_warmup_steps is not None:
+                assert decay_start > sparsity_warmup_steps, "decay_start must be > sparsity_warmup_steps."
+
+        assert 0 <= warmup_steps < steps, "warmup_steps must be >= 0 and < steps."
+
+        if sparsity_warmup_steps is not None:
+            assert 0 <= sparsity_warmup_steps < steps, "sparsity_warmup_steps must be >= 0 and < steps."
+
+        def warmup_fn(step):
+            if step < warmup_steps:
+                return step / warmup_steps
+            
+            if decay_start is not None and step >= decay_start:
+                return (steps - step) / (steps - decay_start)
+
+            return 1.0
+        
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
 
         self.logging_parameters = []
 

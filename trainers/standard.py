@@ -34,18 +34,20 @@ class StandardTrainer(SAETrainer):
     Standard SAE training scheme.
     """
     def __init__(self,
+                 steps: int, # total number of steps to train for
+                 activation_dim: int,
+                 dict_size: int,
+                 layer: int,
+                 lm_name: str,
                  dict_class=AutoEncoder,
-                 activation_dim:int=512,
-                 dict_size:int=64*512,
-                 lr:float=1e-3, 
+                 lr:float=1e-3,
                  l1_penalty:float=1e-1,
                  warmup_steps:int=1000, # lr warmup period at start of training and after each resample
                  sparsity_warmup_steps:Optional[int]=2000, # sparsity warmup period at start of training
+                 decay_start:Optional[int]=None, # decay learning rate after this many steps
                  resample_steps:Optional[int]=None, # how often to resample neurons
                  seed:Optional[int]=None,
                  device=None,
-                 layer:Optional[int]=None,
-                 lm_name:Optional[str]=None,
                  wandb_name:Optional[str]='StandardTrainer',
                  submodule_name:Optional[str]=None,
     ):
@@ -66,6 +68,9 @@ class StandardTrainer(SAETrainer):
         self.lr = lr
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
+        self.sparsity_warmup_steps = sparsity_warmup_steps
+        self.steps = steps
+        self.decay_start = decay_start
         self.wandb_name = wandb_name
 
         if device is None:
@@ -73,8 +78,6 @@ class StandardTrainer(SAETrainer):
         else:
             self.device = device
         self.ae.to(self.device)
-        
-        self.sparsity_warmup_steps = sparsity_warmup_steps
 
         self.resample_steps = resample_steps
         if self.resample_steps is not None:
@@ -84,9 +87,28 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active = None 
 
         self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
+
+        if decay_start is not None:
+            assert resample_steps is None, "decay_start and resample_steps are currently mutually exclusive."
+            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
+            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
+            if sparsity_warmup_steps is not None:
+                assert decay_start > sparsity_warmup_steps, "decay_start must be > sparsity_warmup_steps."
+
+        assert 0 <= warmup_steps < steps, "warmup_steps must be >= 0 and < steps."
+
+        if sparsity_warmup_steps is not None:
+            assert 0 <= sparsity_warmup_steps < steps, "sparsity_warmup_steps must be >= 0 and < steps."
+
         if resample_steps is None:
             def warmup_fn(step):
-                return min(step / warmup_steps, 1.)
+                if step < warmup_steps:
+                    return step / warmup_steps
+                
+                if decay_start is not None and step >= decay_start:
+                    return (steps - step) / (steps - decay_start)
+
+                return 1.0
         else:
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
@@ -185,6 +207,8 @@ class StandardTrainer(SAETrainer):
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
             'sparsity_warmup_steps' : self.sparsity_warmup_steps,
+            'steps' : self.steps,
+            'decay_start' : self.decay_start,
             'seed' : self.seed,
             'device' : self.device,
             'layer' : self.layer,

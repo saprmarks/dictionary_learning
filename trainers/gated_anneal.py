@@ -3,6 +3,8 @@ Implements the training scheme for a gated SAE described in https://arxiv.org/ab
 """
 
 import torch as t
+from typing import Optional
+
 from ..trainers.trainer import SAETrainer
 from ..config import DEBUG
 from ..dictionary import GatedAutoEncoder
@@ -33,26 +35,28 @@ class GatedAnnealTrainer(SAETrainer):
     Gated SAE training scheme with p-annealing.
     """
     def __init__(self,
-                 dict_class=GatedAutoEncoder,
-                 activation_dim=512,
-                 dict_size=64*512,
-                 lr=3e-4, 
-                 warmup_steps=1000, # lr warmup period at start of training and after each resample
-                 sparsity_function='Lp^p', # Lp or Lp^p
-                 initial_sparsity_penalty=1e-1, # equal to l1 penalty in standard trainer
-                 anneal_start=15000, # step at which to start annealing p
-                 anneal_end=None, # step at which to stop annealing, defaults to steps-1
-                 p_start=1, # starting value of p (constant throughout warmup)
-                 p_end=0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
-                 n_sparsity_updates = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
-                 sparsity_queue_length = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
-                 resample_steps=None, # number of steps after which to resample dead neurons
-                 steps=None, # total number of steps to train for
-                 device=None,
-                 seed=42,
-                 layer=None,
-                 lm_name=None,
-                 wandb_name='GatedAnnealTrainer',
+                 steps: int, # total number of steps to train for
+                 activation_dim: int,
+                 dict_size: int,
+                 layer: int,
+                 lm_name: str,
+                 dict_class: type = GatedAutoEncoder,
+                 lr: float = 3e-4,
+                 warmup_steps: int = 1000, # lr warmup period at start of training and after each resample
+                 sparsity_warmup_steps: Optional[int] = 2000, # sparsity warmup period at start of training
+                 decay_start: Optional[int] = None, # decay learning rate after this many steps
+                 sparsity_function: str = 'Lp^p', # Lp or Lp^p
+                 initial_sparsity_penalty: float = 1e-1, # equal to l1 penalty in standard trainer
+                 anneal_start: int = 15000, # step at which to start annealing p
+                 anneal_end: Optional[int] = None, # step at which to stop annealing, defaults to steps-1
+                 p_start: float = 1, # starting value of p (constant throughout warmup)
+                 p_end: float = 0, # annealing p_start to p_end linearly after warmup_steps, exact endpoint excluded
+                 n_sparsity_updates: int | str = 10, # number of times to update the sparsity penalty, at most steps-anneal_start times
+                 sparsity_queue_length: int = 10, # number of recent sparsity loss terms, onle needed for adaptive_sparsity_penalty
+                 resample_steps: Optional[int] = None, # number of steps after which to resample dead neurons
+                 device: Optional[str] = None,
+                 seed: Optional[int] = 42,
+                 wandb_name: str = 'GatedAnnealTrainer',
     ):
         super().__init__(seed)
 
@@ -98,6 +102,8 @@ class GatedAnnealTrainer(SAETrainer):
         self.sparsity_queue = []
 
         self.warmup_steps = warmup_steps
+        self.sparsity_warmup_steps = sparsity_warmup_steps
+        self.decay_start = decay_start
         self.steps = steps
         self.logging_parameters = ['p', 'next_p', 'lp_loss', 'scaled_lp_loss', 'sparsity_coeff']
         self.seed = seed
@@ -111,9 +117,28 @@ class GatedAnnealTrainer(SAETrainer):
             self.steps_since_active = None 
 
         self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
+
+        if decay_start is not None:
+            assert resample_steps is None, "decay_start and resample_steps are currently mutually exclusive."
+            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
+            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
+            if sparsity_warmup_steps is not None:
+                assert decay_start > sparsity_warmup_steps, "decay_start must be > sparsity_warmup_steps."
+
+        assert 0 <= warmup_steps < anneal_start, "warmup_steps must be >= 0 and < anneal_start."
+
+        if sparsity_warmup_steps is not None:
+            assert 0 <= sparsity_warmup_steps < anneal_start, "sparsity_warmup_steps must be >= 0 and < anneal_start."
+
         if resample_steps is None:
             def warmup_fn(step):
-                return min(step / warmup_steps, 1.)
+                if step < warmup_steps:
+                    return step / warmup_steps
+                
+                if decay_start is not None and step >= decay_start:
+                    return (steps - step) / (steps - decay_start)
+
+                return 1.0
         else:
             def warmup_fn(step):
                 return min((step % resample_steps) / warmup_steps, 1.)
@@ -160,7 +185,11 @@ class GatedAnnealTrainer(SAETrainer):
         else:
             raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
         
-    def loss(self, x, step, logging=False, **kwargs):
+    def loss(self, x:t.Tensor, step:int, logging=False, **kwargs):
+        if self.sparsity_warmup_steps is not None:
+            sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
+        else:
+            sparsity_scale = 1.0
         f, f_gate = self.ae.encode(x, return_gate=True)
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
@@ -170,7 +199,7 @@ class GatedAnnealTrainer(SAETrainer):
 
         fs = f_gate # feature activation that we use for sparsity term
         lp_loss = self.lp_norm(fs, self.p)
-        scaled_lp_loss = lp_loss * self.sparsity_coeff
+        scaled_lp_loss = lp_loss * self.sparsity_coeff * sparsity_scale
         self.lp_loss = lp_loss
         self.scaled_lp_loss = scaled_lp_loss
 
@@ -263,6 +292,8 @@ class GatedAnnealTrainer(SAETrainer):
             'n_sparsity_updates' : self.n_sparsity_updates,
             'warmup_steps' : self.warmup_steps,
             'resample_steps' : self.resample_steps,
+            'sparsity_warmup_steps' : self.sparsity_warmup_steps,
+            'decay_start' : self.decay_start,
             'steps' : self.steps,
             'seed' : self.seed,
             'layer' : self.layer,

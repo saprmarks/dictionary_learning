@@ -35,17 +35,19 @@ class GatedSAETrainer(SAETrainer):
     Gated SAE training scheme.
     """
     def __init__(self,
+                 steps: int, # total number of steps to train for
+                 activation_dim: int,
+                 dict_size: int,
+                 layer: int,
+                 lm_name: str,
                  dict_class = GatedAutoEncoder,
-                 activation_dim: int = 512,
-                 dict_size: int = 64*512,
                  lr: float = 5e-5,
                  l1_penalty: float = 1e-1,
                  warmup_steps: int = 1000, # lr warmup period at start of training and after each resample
-                 sparsity_warmup_steps: int = 2000,
+                 sparsity_warmup_steps: Optional[int] = 2000,
+                 decay_start:Optional[int]=None, # decay learning rate after this many steps
                  seed: Optional[int] = None,
                  device: Optional[str] = None,
-                 layer: Optional[int] = None,
-                 lm_name: Optional[str] = None,
                  wandb_name: Optional[str] = 'GatedSAETrainer',
                  submodule_name: Optional[str] = None,
     ):
@@ -67,6 +69,7 @@ class GatedSAETrainer(SAETrainer):
         self.l1_penalty=l1_penalty
         self.warmup_steps = warmup_steps
         self.sparsity_warmup_steps = sparsity_warmup_steps
+        self.decay_start = decay_start
         self.wandb_name = wandb_name
 
         if device is None:
@@ -80,8 +83,27 @@ class GatedSAETrainer(SAETrainer):
             self.ae.decoder.parameters(),
             lr=lr
         )
+
+        if decay_start is not None:
+            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
+            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
+            if sparsity_warmup_steps is not None:
+                assert decay_start > sparsity_warmup_steps, "decay_start must be > sparsity_warmup_steps."
+
+        assert 0 <= warmup_steps < steps, "warmup_steps must be >= 0 and < steps."
+
+        if sparsity_warmup_steps is not None:
+            assert 0 <= sparsity_warmup_steps < steps, "sparsity_warmup_steps must be >= 0 and < steps."
+
         def warmup_fn(step):
-            return min(1, step / warmup_steps)
+            if step < warmup_steps:
+                return step / warmup_steps
+            
+            if decay_start is not None and step >= decay_start:
+                return (steps - step) / (steps - decay_start)
+
+            return 1.0
+
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, warmup_fn)
 
     def loss(self, x:t.Tensor, step:int, logging:bool=False, **kwargs):
@@ -133,6 +155,7 @@ class GatedSAETrainer(SAETrainer):
             'l1_penalty' : self.l1_penalty,
             'warmup_steps' : self.warmup_steps,
             'sparsity_warmup_steps' : self.sparsity_warmup_steps,
+            'decay_start' : self.decay_start,
             'seed' : self.seed,
             'device' : self.device,
             'layer' : self.layer,
