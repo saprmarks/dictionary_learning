@@ -94,7 +94,7 @@ def test_sae_training():
     learning_rate = 3e-4
 
     # topk sae training parameters
-    decay_start = 24000
+    decay_start = None
     auxk_alpha = 1 / 32
 
     submodule = model.gpt_neox.layers[LAYER]
@@ -128,6 +128,7 @@ def test_sae_training():
                 "dict_size": expansion_factor * activation_dim,
                 "k": k,
                 "auxk_alpha": auxk_alpha,  # see Appendix A.2
+                "warmup_steps": 0,
                 "decay_start": decay_start,  # when does the lr decay start
                 "steps": steps,  # when when does training end
                 "seed": RANDOM_SEED,
@@ -150,6 +151,8 @@ def test_sae_training():
                 "l1_penalty": sparsity_penalty,
                 "warmup_steps": warmup_steps,
                 "sparsity_warmup_steps": None,
+                "decay_start": decay_start,
+                "steps": steps,
                 "resample_steps": resample_steps,
                 "seed": RANDOM_SEED,
                 "wandb_name": f"StandardTrainer-{MODEL_NAME}-{submodule_name}",

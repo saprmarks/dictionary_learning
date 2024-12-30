@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import einops
 from collections import namedtuple
+from typing import Optional
 
 from ..dictionary import Dictionary
 from ..trainers.trainer import SAETrainer
@@ -108,22 +109,23 @@ class BatchTopKSAE(Dictionary, nn.Module):
 class BatchTopKTrainer(SAETrainer):
     def __init__(
         self,
-        dict_class=BatchTopKSAE,
-        activation_dim=512,
-        dict_size=64 * 512,
-        k=8,
-        auxk_alpha=1 / 32,
-        decay_start=24000,
-        threshold_beta=0.999,
-        threshold_start_step=1000,
-        steps=30000,
-        top_k_aux=512,
-        seed=None,
-        device=None,
-        layer=None,
-        lm_name=None,
-        wandb_name="BatchTopKSAE",
-        submodule_name=None,
+        steps: int, # total number of steps to train for
+        activation_dim: int,
+        dict_size: int,
+        k: int,
+        layer: int,
+        lm_name: str,
+        dict_class: type = BatchTopKSAE,
+        auxk_alpha: float = 1 / 32,
+        warmup_steps: int = 1000,
+        decay_start: Optional[int] = None,  # when does the lr decay start
+        threshold_beta: float = 0.999,
+        threshold_start_step: int = 1000,
+        top_k_aux: int = 512,
+        seed: Optional[int] = None,
+        device: Optional[str] = None,
+        wandb_name: str = "BatchTopKSAE",
+        submodule_name: Optional[str] = None,
     ):
         super().__init__(seed)
         assert layer is not None and lm_name is not None
@@ -132,6 +134,8 @@ class BatchTopKTrainer(SAETrainer):
         self.submodule_name = submodule_name
         self.wandb_name = wandb_name
         self.steps = steps
+        self.decay_start = decay_start
+        self.warmup_steps = warmup_steps
         self.k = k
         self.threshold_beta = threshold_beta
         self.threshold_start_step = threshold_start_step
@@ -156,11 +160,20 @@ class BatchTopKTrainer(SAETrainer):
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
+        if decay_start is not None:
+            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
+            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
+
+        assert 0 <= warmup_steps < steps, "warmup_steps must be >= 0 and < steps."
+
         def lr_fn(step):
-            if step < decay_start:
-                return 1.0
-            else:
+            if step < warmup_steps:
+                return step / warmup_steps
+            
+            if decay_start is not None and step >= decay_start:
                 return (steps - step) / (steps - decay_start)
+
+            return 1.0
 
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
 
@@ -264,6 +277,12 @@ class BatchTopKTrainer(SAETrainer):
             "dict_class": "BatchTopKSAE",
             "lr": self.lr,
             "steps": self.steps,
+            "auxk_alpha": self.auxk_alpha,
+            "warmup_steps": self.warmup_steps,
+            "decay_start": self.decay_start,
+            "threshold_beta": self.threshold_beta,
+            "threshold_start_step": self.threshold_start_step,
+            "top_k_aux": self.top_k_aux,
             "seed": self.seed,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,

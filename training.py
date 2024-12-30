@@ -105,10 +105,10 @@ def get_norm_factor(data, steps: int) -> float:
 def trainSAE(
     data,
     trainer_configs: list[dict],
+    steps: int,
     use_wandb:bool=False,
     wandb_entity:str="",
     wandb_project:str="",
-    steps:Optional[int]=None,
     save_steps:Optional[list[int]]=None,
     save_dir:Optional[str]=None,
     log_steps:Optional[int]=None,
@@ -179,7 +179,7 @@ def trainSAE(
         if normalize_activations:
             act /= norm_factor
 
-        if steps is not None and step >= steps:
+        if step >= steps:
             break
 
         # logging
