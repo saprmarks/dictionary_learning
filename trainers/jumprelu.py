@@ -185,6 +185,7 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         torch.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
 
         self.optimizer.step()
+        self.scheduler.step()
         self.optimizer.zero_grad()
         return loss.item()
 
