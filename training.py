@@ -187,6 +187,16 @@ def trainSAE(
             log_stats(
                 trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues
             )
+        if step % 100 == 0:
+            z = act.clone()
+            for i, trainer in enumerate(trainers):
+                act = z.clone()
+                act, act_hat, f, losslog = trainer.loss(act, step=step, logging=True)
+
+                # L0
+                l0 = (f != 0).float().sum(dim=-1).mean().item()
+
+                print(f"Step {step}: L0 = {l0}")
 
         # saving
         if save_steps is not None and step in save_steps:

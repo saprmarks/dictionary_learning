@@ -23,11 +23,11 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
         self.register_buffer("k", t.tensor(k))
         self.register_buffer("threshold", t.tensor(-1.0))
 
-        self.group_sizes = group_sizes
         self.active_groups = len(group_sizes)
         group_indices = [0] + list(t.cumsum(t.tensor(group_sizes), dim=0))
+        self.group_indices = group_indices
 
-        self.register_buffer("group_indices", t.tensor(group_indices))
+        self.register_buffer("group_sizes", t.tensor(group_sizes))
 
         self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size))
         self.b_enc = nn.Parameter(t.zeros(dict_size))
@@ -106,13 +106,15 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
     @classmethod
     def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "MatroyshkaBatchTopKSAE":
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict["W_enc"].shape
+        activation_dim, dict_size = state_dict["W_enc"].shape
         if k is None:
             k = state_dict["k"].item()
         elif "k" in state_dict and k != state_dict["k"].item():
             raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
 
-        autoencoder = cls(activation_dim, dict_size, k)
+        group_sizes = state_dict["group_sizes"].tolist()
+
+        autoencoder = cls(activation_dim, dict_size, k=k, group_sizes=group_sizes)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
