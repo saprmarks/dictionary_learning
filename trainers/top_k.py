@@ -64,12 +64,12 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         self.register_buffer("k", t.tensor(k))
         self.register_buffer("threshold", t.tensor(-1.0))
 
-        self.encoder = nn.Linear(activation_dim, dict_size)
-        self.encoder.bias.data.zero_()
-
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        self.decoder.weight.data = self.encoder.weight.data.clone().T
         self.set_decoder_norm_to_unit_norm()
+
+        self.encoder = nn.Linear(activation_dim, dict_size)
+        self.encoder.weight.data = self.decoder.weight.T.clone()
+        self.encoder.bias.data.zero_()
 
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
@@ -162,7 +162,7 @@ class TopKTrainer(SAETrainer):
 
     def __init__(
         self,
-        steps: int, # total number of steps to train for
+        steps: int,  # total number of steps to train for
         activation_dim: int,
         dict_size: int,
         k: int,
@@ -224,7 +224,7 @@ class TopKTrainer(SAETrainer):
         def lr_fn(step):
             if step < warmup_steps:
                 return step / warmup_steps
-            
+
             if decay_start is not None and step >= decay_start:
                 return (steps - step) / (steps - decay_start)
 

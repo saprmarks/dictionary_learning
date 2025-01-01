@@ -177,6 +177,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         dec_weight = t.randn_like(self.decoder.weight)
         dec_weight = dec_weight / dec_weight.norm(dim=0, keepdim=True)
         self.decoder.weight = nn.Parameter(dec_weight)
+        self.encoder.weight = nn.Parameter(dec_weight.clone().T)
 
     def encode(self, x, return_gate=False):
         """
@@ -249,16 +250,16 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         self.dict_size = dict_size
         self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size, device=device))
         self.b_enc = nn.Parameter(t.zeros(dict_size, device=device))
-        self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim, device=device))
+        self.W_dec = nn.Parameter(
+            t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim)), device=device
+        )
         self.b_dec = nn.Parameter(t.zeros(activation_dim, device=device))
-        self.threshold = nn.Parameter(t.zeros(dict_size, device=device))
+        self.threshold = nn.Parameter(t.ones(dict_size, device=device)) * 0.001  # Appendix I
 
         self.apply_b_dec_to_input = False
 
-        # rows of decoder weight matrix are initialized to unit vectors
-        self.W_enc.data = t.randn_like(self.W_enc)
-        self.W_enc.data = self.W_enc / self.W_enc.norm(dim=0, keepdim=True)
-        self.W_dec.data = self.W_enc.data.clone().T
+        self.W_dec.data = self.W_dec / self.W_dec.norm(dim=1, keepdim=True)
+        self.W_enc.data = self.W_dec.data.clone().T
 
     def encode(self, x, output_pre_jump=False):
         if self.apply_b_dec_to_input:

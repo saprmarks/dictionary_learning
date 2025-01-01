@@ -19,11 +19,12 @@ class BatchTopKSAE(Dictionary, nn.Module):
         self.register_buffer("k", t.tensor(k))
         self.register_buffer("threshold", t.tensor(-1.0))
 
-        self.encoder = nn.Linear(activation_dim, dict_size)
-        self.encoder.bias.data.zero_()
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        self.decoder.weight.data = self.encoder.weight.data.clone().T
         self.set_decoder_norm_to_unit_norm()
+
+        self.encoder = nn.Linear(activation_dim, dict_size)
+        self.encoder.weight.data = self.decoder.weight.T.clone()
+        self.encoder.bias.data.zero_()
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
     def encode(self, x: t.Tensor, return_active: bool = False, use_threshold: bool = True):
@@ -109,7 +110,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
 class BatchTopKTrainer(SAETrainer):
     def __init__(
         self,
-        steps: int, # total number of steps to train for
+        steps: int,  # total number of steps to train for
         activation_dim: int,
         dict_size: int,
         k: int,
@@ -121,7 +122,6 @@ class BatchTopKTrainer(SAETrainer):
         decay_start: Optional[int] = None,  # when does the lr decay start
         threshold_beta: float = 0.999,
         threshold_start_step: int = 1000,
-        top_k_aux: int = 512,
         seed: Optional[int] = None,
         device: Optional[str] = None,
         wandb_name: str = "BatchTopKSAE",
@@ -156,7 +156,7 @@ class BatchTopKTrainer(SAETrainer):
         self.lr = 2e-4 / scale**0.5
         self.auxk_alpha = auxk_alpha
         self.dead_feature_threshold = 10_000_000
-        self.top_k_aux = top_k_aux
+        self.top_k_aux = activation_dim // 2  # Heuristic from B.1 of the paper
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
@@ -169,7 +169,7 @@ class BatchTopKTrainer(SAETrainer):
         def lr_fn(step):
             if step < warmup_steps:
                 return step / warmup_steps
-            
+
             if decay_start is not None and step >= decay_start:
                 return (steps - step) / (steps - decay_start)
 
@@ -195,9 +195,7 @@ class BatchTopKTrainer(SAETrainer):
                 -1, acts_topk_aux.indices, acts_topk_aux.values
             )
             x_reconstruct_aux = F.linear(acts_aux, self.ae.decoder.weight[:, dead_features])
-            l2_loss_aux = (
-                self.auxk_alpha * (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
-            )
+            l2_loss_aux = (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
             return l2_loss_aux
         else:
             return t.tensor(0, dtype=x.dtype, device=x.device)

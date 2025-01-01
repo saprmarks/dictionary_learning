@@ -50,10 +50,9 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
 
         self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size))
         self.b_enc = nn.Parameter(t.zeros(dict_size))
-        self.W_dec = nn.Parameter(t.empty(dict_size, activation_dim))
+        self.W_dec = nn.Parameter(t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim)))
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-        self.W_dec.data = t.randn_like(self.W_dec)
         self.set_decoder_norm_to_unit_norm()
         self.W_enc.data = self.W_dec.data.clone().T
 
@@ -159,7 +158,6 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         decay_start: Optional[int] = None,  # when does the lr decay start
         threshold_beta: float = 0.999,
         threshold_start_step: int = 1000,
-        top_k_aux: int = 512,
         seed: Optional[int] = None,
         device: Optional[str] = None,
         wandb_name: str = "BatchTopKSAE",
@@ -214,7 +212,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         self.lr = 2e-4 / scale**0.5
         self.auxk_alpha = auxk_alpha
         self.dead_feature_threshold = 10_000_000
-        self.top_k_aux = top_k_aux
+        self.top_k_aux = activation_dim // 2  # Heuristic from B.1 of the paper
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
@@ -252,10 +250,9 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
             acts_aux = t.zeros_like(acts[:, dead_features]).scatter(
                 -1, acts_topk_aux.indices, acts_topk_aux.values
             )
-            x_reconstruct_aux = F.linear(acts_aux, self.ae.decoder.weight[:, dead_features])
-            l2_loss_aux = (
-                self.auxk_alpha * (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
-            )
+            x_reconstruct_aux = F.linear(acts_aux, self.ae.W_dec[dead_features, :].T)
+            l2_loss_aux = (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
+
             return l2_loss_aux
         else:
             return t.tensor(0, dtype=x.dtype, device=x.device)
