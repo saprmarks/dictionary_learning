@@ -78,7 +78,8 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
     @t.no_grad()
     def set_decoder_norm_to_unit_norm(self):
         eps = t.finfo(self.W_dec.dtype).eps
-        norm = t.norm(self.W_dec.data, dim=0, keepdim=True)
+        norm = t.norm(self.W_dec.data, dim=1, keepdim=True)
+
         self.W_dec.data /= norm + eps
 
     @t.no_grad()
