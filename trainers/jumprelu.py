@@ -8,7 +8,6 @@ from typing import Optional
 from ..dictionary import Dictionary, JumpReluAutoEncoder
 from .trainer import SAETrainer
 
-
 class RectangleFunction(autograd.Function):
     @staticmethod
     def forward(ctx, x):
@@ -32,7 +31,7 @@ class JumpReLUFunction(autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         x, threshold, bandwidth_tensor = ctx.saved_tensors
-        bandwidth = bandwidth_tensor.item()
+        bandwidth = bandwidth_tensor.item() 
         x_grad = (x > threshold).float() * grad_output
         threshold_grad = (
             -(threshold / bandwidth)
@@ -155,7 +154,10 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         else:
             sparsity_scale = 1.0
 
-        f = self.ae.encode(x)
+        
+        pre_jump = x @ self.ae.W_enc + self.ae.b_enc
+        f = JumpReLUFunction.apply(pre_jump, self.ae.threshold, self.bandwidth)
+
         recon = self.ae.decode(f)
 
         recon_loss = (x - recon).pow(2).sum(dim=-1).mean()
@@ -178,11 +180,14 @@ class JumpReluTrainer(nn.Module, SAETrainer):
             )
 
     def update(self, step, x):
+        self.ae.set_decoder_norm_to_unit_norm()
+
         x = x.to(self.device)
         loss = self.loss(x, step=step)
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
+        self.ae.remove_gradient_parallel_to_decoder_directions()
 
         self.optimizer.step()
         self.scheduler.step()

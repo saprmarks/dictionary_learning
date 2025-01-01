@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import torch as t
 import torch.nn as nn
 import torch.nn.init as init
+import einops
 
 
 class Dictionary(ABC, nn.Module):
@@ -251,10 +252,10 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size, device=device))
         self.b_enc = nn.Parameter(t.zeros(dict_size, device=device))
         self.W_dec = nn.Parameter(
-            t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim)), device=device
+            t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim, device=device))
         )
         self.b_dec = nn.Parameter(t.zeros(activation_dim, device=device))
-        self.threshold = nn.Parameter(t.ones(dict_size, device=device)) * 0.001  # Appendix I
+        self.threshold = nn.Parameter(t.ones(dict_size, device=device) * 0.001) # Appendix I
 
         self.apply_b_dec_to_input = False
 
@@ -267,7 +268,6 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         pre_jump = x @ self.W_enc + self.b_enc
 
         f = nn.ReLU()(pre_jump * (pre_jump > self.threshold))
-        f = f * self.W_dec.norm(dim=1)
 
         if output_pre_jump:
             return f, pre_jump
@@ -275,7 +275,6 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             return f
 
     def decode(self, f):
-        f = f / self.W_dec.norm(dim=1)
         return f @ self.W_dec + self.b_dec
 
     def forward(self, x, output_features=False):
@@ -331,6 +330,28 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             device = autoencoder.W_enc.device
         return autoencoder.to(dtype=dtype, device=device)
+
+    @t.no_grad()
+    def set_decoder_norm_to_unit_norm(self):
+        eps = t.finfo(self.W_dec.dtype).eps
+        norm = t.norm(self.W_dec.data, dim=1, keepdim=True)
+
+        self.W_dec.data /= norm + eps
+
+    @t.no_grad()
+    def remove_gradient_parallel_to_decoder_directions(self):
+        assert self.W_dec.grad is not None
+
+        parallel_component = einops.einsum(
+            self.W_dec.grad,
+            self.W_dec.data,
+            "d_sae d_in, d_sae d_in -> d_sae",
+        )
+        self.W_dec.grad -= einops.einsum(
+            parallel_component,
+            self.W_dec.data,
+            "d_sae, d_sae d_in -> d_sae d_in",
+        )
 
 
 # TODO merge this with AutoEncoder
