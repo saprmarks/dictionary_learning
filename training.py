@@ -3,7 +3,7 @@ Training dictionaries
 """
 
 import json
-import multiprocessing as mp
+import torch.multiprocessing as mp
 import os
 from queue import Empty
 from typing import Optional
@@ -64,10 +64,12 @@ def log_stats(
                 l0 = (f != 0).float().sum(dim=-1).mean().item()
 
             # log parameters from training
-            log.update({f"{k}": v for k, v in losslog.items()})
+            log.update({f"{k}": v.cpu().item() if isinstance(v, t.Tensor) else v for k, v in losslog.items()})
             log[f"l0"] = l0
             trainer_log = trainer.get_logging_parameters()
             for name, value in trainer_log.items():
+                if isinstance(value, t.Tensor):
+                    value = value.cpu().item()
                 log[f"{name}"] = value
 
             if log_queues:
@@ -137,10 +139,16 @@ def trainSAE(
     log_queues = []
 
     if use_wandb:
+        # Note: If encountering wandb and CUDA related errors, try setting start method to spawn in the if __name__ == "__main__" block
+        # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.set_start_method
+        # Everything should work fine with the default fork method but it may not be as robust
         for i, trainer in enumerate(trainers):
             log_queue = mp.Queue()
             log_queues.append(log_queue)
             wandb_config = trainer.config | run_cfg
+            # Make sure wandb config doesn't contain any CUDA tensors
+            wandb_config = {k: v.cpu().item() if isinstance(v, t.Tensor) else v 
+                          for k, v in wandb_config.items()}
             wandb_process = mp.Process(
                 target=new_wandb_process,
                 args=(wandb_config, log_queue, wandb_entity, wandb_project),
