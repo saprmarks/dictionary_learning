@@ -184,6 +184,8 @@ class BatchTopKTrainer(SAETrainer):
 
     def get_auxiliary_loss(self, x, x_reconstruct, acts):
         dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
+        self.dead_features = int(dead_features.sum())
+        
         if dead_features.sum() > 0:
             residual = x.float() - x_reconstruct.float()
             acts_topk_aux = t.topk(
