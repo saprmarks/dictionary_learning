@@ -126,7 +126,9 @@ def trainSAE(
     """
 
     trainers = []
-    for config in trainer_configs:
+    for i, config in enumerate(trainer_configs):
+        if "wandb_name" in config:
+            config["wandb_name"] = f"{config['wandb_name']}_trainer_{i}"
         trainer_class = config["trainer"]
         del config["trainer"]
         trainers.append(trainer_class(**config))
