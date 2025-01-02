@@ -74,7 +74,6 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         layer: int,
         lm_name: str,
         dict_class=JumpReluAutoEncoder,
-        # XXX: Training decay is not implemented
         seed: Optional[int] = None,
         # TODO: What's the default lr use in the paper?
         lr: float = 7e-5,
@@ -148,6 +147,9 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         self.logging_parameters = []
 
     def loss(self, x: torch.Tensor, step: int, logging=False, **_):
+        # Note: We are using threshold, not log_threshold as in this notebook:
+        # https://colab.research.google.com/drive/1PlFzI_PWGTN9yCQLuBcSuPJUjgHL7GiD#scrollTo=yP828a6uIlSO
+        # I had poor results when using log_threshold and it would complicate the scale_biases() function
 
         if self.sparsity_warmup_steps is not None:
             sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
