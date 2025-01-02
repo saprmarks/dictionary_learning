@@ -144,7 +144,11 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
 
-        self.logging_parameters = []
+        # Purely for logging purposes
+        self.dead_feature_threshold = 10_000_000
+        self.num_tokens_since_fired = torch.zeros(dict_size, dtype=torch.long, device=device)
+        self.dead_features = -1
+        self.logging_parameters = ["dead_features"]
 
     def loss(self, x: torch.Tensor, step: int, logging=False, **_):
         # Note: We are using threshold, not log_threshold as in this notebook:
@@ -156,9 +160,15 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         else:
             sparsity_scale = 1.0
 
-        
         pre_jump = x @ self.ae.W_enc + self.ae.b_enc
         f = JumpReLUFunction.apply(pre_jump, self.ae.threshold, self.bandwidth)
+
+        active_indices = f.sum(0) > 0
+        did_fire = torch.zeros_like(self.num_tokens_since_fired, dtype=torch.bool)
+        did_fire[active_indices] = True
+        self.num_tokens_since_fired += x.size(0)
+        self.num_tokens_since_fired[active_indices] = 0
+        self.dead_features = (self.num_tokens_since_fired > self.dead_feature_threshold).sum().item()
 
         recon = self.ae.decode(f)
 
