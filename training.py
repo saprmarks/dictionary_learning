@@ -38,6 +38,7 @@ def log_stats(
     activations_split_by_head: bool,
     transcoder: bool,
     log_queues: list=[],
+    verbose: bool=False,
 ):
     with t.no_grad():
         # quick hack to make sure all trainers get the same x
@@ -62,6 +63,9 @@ def log_stats(
 
                 # L0
                 l0 = (f != 0).float().sum(dim=-1).mean().item()
+
+            if verbose:
+                print(f"Step {step}: L0 = {l0}, frac_variance_explained = {frac_variance_explained}")
 
             # log parameters from training
             log.update({f"{k}": v.cpu().item() if isinstance(v, t.Tensor) else v for k, v in losslog.items()})
@@ -118,6 +122,7 @@ def trainSAE(
     transcoder:bool=False,
     run_cfg:dict={},
     normalize_activations:bool=False,
+    verbose:bool=False,
 ):
     """
     Train SAEs using the given trainers
@@ -193,20 +198,10 @@ def trainSAE(
             break
 
         # logging
-        if log_steps is not None and step % log_steps == 0:
+        if (use_wandb or verbose) and step % log_steps == 0:
             log_stats(
-                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues
+                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues, verbose=verbose
             )
-        if step % 100 == 0:
-            z = act.clone()
-            for i, trainer in enumerate(trainers):
-                act = z.clone()
-                act, act_hat, f, losslog = trainer.loss(act, step=step, logging=True)
-
-                # L0
-                l0 = (f != 0).float().sum(dim=-1).mean().item()
-
-                print(f"Step {step}: L0 = {l0}")
 
         # saving
         if save_steps is not None and step in save_steps:
