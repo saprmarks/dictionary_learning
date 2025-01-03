@@ -100,8 +100,32 @@ class AutoEncoder(Dictionary, nn.Module):
         self.encoder.bias.data *= scale
         self.bias.data *= scale
 
+    def normalize_decoder(self):
+        norms = t.norm(self.decoder.weight, dim=0).to(dtype=self.decoder.weight.dtype, device=self.decoder.weight.device)
+
+        if t.allclose(norms, t.ones_like(norms)):
+            return
+        print("Normalizing decoder weights")
+
+        test_input = t.randn(10, self.activation_dim)
+        initial_output = self(test_input)
+
+        self.decoder.weight.data /= norms
+
+        new_norms = t.norm(self.decoder.weight, dim=0)
+        assert t.allclose(new_norms, t.ones_like(new_norms))
+
+        self.encoder.weight.data *= norms[:, None]
+        self.encoder.bias.data *= norms
+
+        new_output = self(test_input)
+
+        # Errors can be relatively large in larger SAEs due to floating point precision
+        assert t.allclose(initial_output, new_output, atol=1e-4)
+
+
     @classmethod
-    def from_pretrained(cls, path, dtype=t.float, device=None):
+    def from_pretrained(cls, path, dtype=t.float, device=None, normalize_decoder=True):
         """
         Load a pretrained autoencoder from a file.
         """
@@ -109,8 +133,15 @@ class AutoEncoder(Dictionary, nn.Module):
         dict_size, activation_dim = state_dict["encoder.weight"].shape
         autoencoder = cls(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
+
+        # This is useful for doing analysis where e.g. feature activation magnitudes are important
+        # If training the SAE using the April update, the decoder weights are not normalized
+        if normalize_decoder:
+            autoencoder.normalize_decoder()
+
         if device is not None:
             autoencoder.to(dtype=dtype, device=device)
+
         return autoencoder
 
 
