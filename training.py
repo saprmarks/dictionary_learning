@@ -214,8 +214,10 @@ def trainSAE(
 
                     if not os.path.exists(os.path.join(dir, "checkpoints")):
                         os.mkdir(os.path.join(dir, "checkpoints"))
+
+                    checkpoint = {k: v.cpu() for k, v in trainer.ae.state_dict().items()}
                     t.save(
-                        trainer.ae.state_dict(),
+                        checkpoint,
                         os.path.join(dir, "checkpoints", f"ae_{step}.pt"),
                     )
 
@@ -231,7 +233,8 @@ def trainSAE(
         if normalize_activations:
             trainer.ae.scale_biases(norm_factor)
         if save_dir is not None:
-            t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
+            final = {k: v.cpu() for k, v in trainer.ae.state_dict().items()}
+            t.save(final, os.path.join(save_dir, "ae.pt"))
 
     # Signal wandb processes to finish
     if use_wandb:
