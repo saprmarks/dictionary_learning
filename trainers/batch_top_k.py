@@ -6,7 +6,12 @@ from collections import namedtuple
 from typing import Optional
 
 from ..dictionary import Dictionary
-from ..trainers.trainer import SAETrainer
+from ..trainers.trainer import (
+    SAETrainer,
+    get_lr_schedule,
+    set_decoder_norm_to_unit_norm,
+    remove_gradient_parallel_to_decoder_directions,
+)
 
 
 class BatchTopKSAE(Dictionary, nn.Module):
@@ -20,7 +25,9 @@ class BatchTopKSAE(Dictionary, nn.Module):
         self.register_buffer("threshold", t.tensor(-1.0))
 
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        self.set_decoder_norm_to_unit_norm()
+        self.decoder.weight.data = set_decoder_norm_to_unit_norm(
+            self.decoder.weight, activation_dim, dict_size
+        )
 
         self.encoder = nn.Linear(activation_dim, dict_size)
         self.encoder.weight.data = self.decoder.weight.T.clone()
@@ -64,26 +71,6 @@ class BatchTopKSAE(Dictionary, nn.Module):
             return x_hat_BD
         else:
             return x_hat_BD, encoded_acts_BF
-
-    @t.no_grad()
-    def set_decoder_norm_to_unit_norm(self):
-        eps = t.finfo(self.decoder.weight.dtype).eps
-        norm = t.norm(self.decoder.weight.data, dim=0, keepdim=True)
-        self.decoder.weight.data /= norm + eps
-
-    @t.no_grad()
-    def remove_gradient_parallel_to_decoder_directions(self):
-        assert self.decoder.weight.grad is not None
-        parallel_component = einops.einsum(
-            self.decoder.weight.grad,
-            self.decoder.weight.data,
-            "d_in d_sae, d_in d_sae -> d_sae",
-        )
-        self.decoder.weight.grad -= einops.einsum(
-            parallel_component,
-            self.decoder.weight.data,
-            "d_sae, d_in d_sae -> d_in d_sae",
-        )
 
     def scale_biases(self, scale: float):
         self.encoder.bias.data *= scale
@@ -160,20 +147,7 @@ class BatchTopKTrainer(SAETrainer):
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
-        if decay_start is not None:
-            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
-            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
-
-        assert 0 <= warmup_steps < steps, "warmup_steps must be >= 0 and < steps."
-
-        def lr_fn(step):
-            if step < warmup_steps:
-                return step / warmup_steps
-
-            if decay_start is not None and step >= decay_start:
-                return (steps - step) / (steps - decay_start)
-
-            return 1.0
+        lr_fn = get_lr_schedule(steps, warmup_steps, decay_start=decay_start)
 
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
 
@@ -185,7 +159,7 @@ class BatchTopKTrainer(SAETrainer):
     def get_auxiliary_loss(self, x, x_reconstruct, acts):
         dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
         self.dead_features = int(dead_features.sum())
-        
+
         if dead_features.sum() > 0:
             residual = x.float() - x_reconstruct.float()
             acts_topk_aux = t.topk(
@@ -255,14 +229,22 @@ class BatchTopKTrainer(SAETrainer):
             median = self.geometric_median(x)
             self.ae.b_dec.data = median
 
-        self.ae.set_decoder_norm_to_unit_norm()
+        # Make sure the decoder is still unit-norm
+        self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
+            self.ae.decoder.weight, self.ae.activation_dim, self.ae.dict_size
+        )
 
         x = x.to(self.device)
         loss = self.loss(x, step=step)
         loss.backward()
 
         t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
-        self.ae.remove_gradient_parallel_to_decoder_directions()
+        self.ae.decoder.weight.grad = remove_gradient_parallel_to_decoder_directions(
+            self.ae.decoder.weight,
+            self.ae.decoder.weight.grad,
+            self.ae.activation_dim,
+            self.ae.dict_size,
+        )
 
         self.optimizer.step()
         self.optimizer.zero_grad()

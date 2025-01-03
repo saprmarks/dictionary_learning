@@ -255,7 +255,7 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
             t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim, device=device))
         )
         self.b_dec = nn.Parameter(t.zeros(activation_dim, device=device))
-        self.threshold = nn.Parameter(t.ones(dict_size, device=device) * 0.001) # Appendix I
+        self.threshold = nn.Parameter(t.ones(dict_size, device=device) * 0.001)  # Appendix I
 
         self.apply_b_dec_to_input = False
 
@@ -330,28 +330,6 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             device = autoencoder.W_enc.device
         return autoencoder.to(dtype=dtype, device=device)
-
-    @t.no_grad()
-    def set_decoder_norm_to_unit_norm(self):
-        eps = t.finfo(self.W_dec.dtype).eps
-        norm = t.norm(self.W_dec.data, dim=1, keepdim=True)
-
-        self.W_dec.data /= norm + eps
-
-    @t.no_grad()
-    def remove_gradient_parallel_to_decoder_directions(self):
-        assert self.W_dec.grad is not None
-
-        parallel_component = einops.einsum(
-            self.W_dec.grad,
-            self.W_dec.data,
-            "d_sae d_in, d_sae d_in -> d_sae",
-        )
-        self.W_dec.grad -= einops.einsum(
-            parallel_component,
-            self.W_dec.data,
-            "d_sae, d_sae d_in -> d_sae d_in",
-        )
 
 
 # TODO merge this with AutoEncoder
