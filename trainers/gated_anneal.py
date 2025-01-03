@@ -5,30 +5,10 @@ Implements the training scheme for a gated SAE described in https://arxiv.org/ab
 import torch as t
 from typing import Optional
 
-from ..trainers.trainer import SAETrainer
+from ..trainers.trainer import SAETrainer, get_lr_schedule, get_sparsity_warmup_fn, ConstrainedAdam
 from ..config import DEBUG
 from ..dictionary import GatedAutoEncoder
 from collections import namedtuple
-
-class ConstrainedAdam(t.optim.Adam):
-    """
-    A variant of Adam where some of the parameters are constrained to have unit norm.
-    """
-    def __init__(self, params, constrained_params, lr):
-        super().__init__(params, lr=lr, betas=(0, 0.999))
-        self.constrained_params = list(constrained_params)
-    
-    def step(self, closure=None):
-        with t.no_grad():
-            for p in self.constrained_params:
-                normed_p = p / p.norm(dim=0, keepdim=True)
-                # project away the parallel component of the gradient
-                p.grad -= (p.grad * normed_p).sum(dim=0, keepdim=True) * normed_p
-        super().step(closure=closure)
-        with t.no_grad():
-            for p in self.constrained_params:
-                # renormalize the constrained parameters
-                p /= p.norm(dim=0, keepdim=True)
 
 class GatedAnnealTrainer(SAETrainer):
     """
@@ -116,33 +96,11 @@ class GatedAnnealTrainer(SAETrainer):
         else:
             self.steps_since_active = None 
 
-        self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr)
+        self.optimizer = ConstrainedAdam(self.ae.parameters(), self.ae.decoder.parameters(), lr=lr, betas=(0.0, 0.999))
 
-        if decay_start is not None:
-            assert resample_steps is None, "decay_start and resample_steps are currently mutually exclusive."
-            assert 0 <= decay_start < steps, "decay_start must be >= 0 and < steps."
-            assert decay_start > warmup_steps, "decay_start must be > warmup_steps."
-            if sparsity_warmup_steps is not None:
-                assert decay_start > sparsity_warmup_steps, "decay_start must be > sparsity_warmup_steps."
-
-        assert 0 <= warmup_steps < anneal_start, "warmup_steps must be >= 0 and < anneal_start."
-
-        if sparsity_warmup_steps is not None:
-            assert 0 <= sparsity_warmup_steps < anneal_start, "sparsity_warmup_steps must be >= 0 and < anneal_start."
-
-        if resample_steps is None:
-            def warmup_fn(step):
-                if step < warmup_steps:
-                    return step / warmup_steps
-                
-                if decay_start is not None and step >= decay_start:
-                    return (steps - step) / (steps - decay_start)
-
-                return 1.0
-        else:
-            def warmup_fn(step):
-                return min((step % resample_steps) / warmup_steps, 1.)
-        self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=warmup_fn)
+        lr_fn = get_lr_schedule(steps, warmup_steps, decay_start, resample_steps, sparsity_warmup_steps)
+        self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
+        self.sparsity_warmup_fn = get_sparsity_warmup_fn(steps, sparsity_warmup_steps)
         
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -186,10 +144,7 @@ class GatedAnnealTrainer(SAETrainer):
             raise ValueError("Sparsity function must be 'Lp' or 'Lp^p'")
         
     def loss(self, x:t.Tensor, step:int, logging=False, **kwargs):
-        if self.sparsity_warmup_steps is not None:
-            sparsity_scale = min(step / self.sparsity_warmup_steps, 1.0)
-        else:
-            sparsity_scale = 1.0
+        sparsity_scale = self.sparsity_warmup_fn(step)
         f, f_gate = self.ae.encode(x, return_gate=True)
         x_hat = self.ae.decode(f)
         x_hat_gate = f_gate @ self.ae.decoder.weight.detach().T + self.ae.decoder_bias.detach()
