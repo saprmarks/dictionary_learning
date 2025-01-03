@@ -155,6 +155,7 @@ class TopKTrainer(SAETrainer):
         layer: int,
         lm_name: str,
         dict_class: type = AutoEncoderTopK,
+        lr: Optional[float] = None,
         auxk_alpha: float = 1 / 32,  # see Appendix A.2
         warmup_steps: int = 1000,
         decay_start: Optional[int] = None,  # when does the lr decay start
@@ -192,9 +193,12 @@ class TopKTrainer(SAETrainer):
             self.device = device
         self.ae.to(self.device)
 
-        # Auto-select LR using 1 / sqrt(d) scaling law from Figure 3 of the paper
-        scale = dict_size / (2**14)
-        self.lr = 2e-4 / scale**0.5
+        if lr is not None:
+            self.lr = lr
+        else:
+            # Auto-select LR using 1 / sqrt(d) scaling law from Figure 3 of the paper
+            scale = dict_size / (2**14)
+            self.lr = 2e-4 / scale**0.5
         self.auxk_alpha = auxk_alpha
         self.dead_feature_threshold = 10_000_000
 

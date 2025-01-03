@@ -124,6 +124,7 @@ def test_sae_training():
             {
                 "trainer": TopKTrainer,
                 "dict_class": AutoEncoderTopK,
+                "lr": None,
                 "activation_dim": activation_dim,
                 "dict_size": expansion_factor * activation_dim,
                 "k": k,
