@@ -7,6 +7,7 @@ from nnsight import LanguageModel
 
 from dictionary_learning.trainers.top_k import AutoEncoderTopK
 from dictionary_learning.trainers.batch_top_k import BatchTopKSAE
+from dictionary_learning.trainers.matroyshka_batch_top_k import MatroyshkaBatchTopKSAE
 from dictionary_learning.dictionary import (
     AutoEncoder,
     GatedAutoEncoder,
@@ -74,7 +75,11 @@ def load_dictionary(base_path: str, device: str) -> tuple:
         k = config["trainer"]["k"]
         dictionary = AutoEncoderTopK.from_pretrained(ae_path, k=k, device=device)
     elif dict_class == "BatchTopKSAE":
-        dictionary = BatchTopKSAE.from_pretrained(ae_path, device=device)
+        k = config["trainer"]["k"]
+        dictionary = BatchTopKSAE.from_pretrained(ae_path, k=k, device=device)
+    elif dict_class == "MatroyshkaBatchTopKSAE":
+        k = config["trainer"]["k"]
+        dictionary = MatroyshkaBatchTopKSAE.from_pretrained(ae_path, k=k, device=device)
     elif dict_class == "JumpReluAutoEncoder":
         dictionary = JumpReluAutoEncoder.from_pretrained(ae_path, device=device)
     else:

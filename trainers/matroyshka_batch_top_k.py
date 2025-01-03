@@ -4,49 +4,77 @@ import torch.nn.functional as F
 import einops
 from collections import namedtuple
 from typing import Optional
+from math import isclose
 
 from ..dictionary import Dictionary
 from ..trainers.trainer import SAETrainer
 
 
-class BatchTopKSAE(Dictionary, nn.Module):
-    def __init__(self, activation_dim: int, dict_size: int, k: int):
+def apply_temperature(probabilities: list[float], temperature: float) -> list[float]:
+    """
+    Apply temperature scaling to a list of probabilities using PyTorch.
+
+    Args:
+        probabilities (list[float]): Initial probability distribution
+        temperature (float): Temperature parameter (> 0)
+
+    Returns:
+        list[float]: Scaled and normalized probabilities
+    """
+    probs_tensor = t.tensor(probabilities, dtype=t.float32)
+    logits = t.log(probs_tensor)
+    scaled_logits = logits / temperature
+    scaled_probs = t.nn.functional.softmax(scaled_logits, dim=0)
+
+    return scaled_probs.tolist()
+
+
+class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
+    def __init__(self, activation_dim: int, dict_size: int, k: int, group_sizes: list[int]):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
+
+        assert sum(group_sizes) == dict_size, "group sizes must sum to dict_size"
+        assert all(s > 0 for s in group_sizes), "all group sizes must be positive"
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
         self.register_buffer("k", t.tensor(k))
         self.register_buffer("threshold", t.tensor(-1.0))
 
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
-        self.set_decoder_norm_to_unit_norm()
+        self.active_groups = len(group_sizes)
+        group_indices = [0] + list(t.cumsum(t.tensor(group_sizes), dim=0))
+        self.group_indices = group_indices
 
-        self.encoder = nn.Linear(activation_dim, dict_size)
-        self.encoder.weight.data = self.decoder.weight.T.clone()
-        self.encoder.bias.data.zero_()
+        self.register_buffer("group_sizes", t.tensor(group_sizes))
+
+        self.W_enc = nn.Parameter(t.empty(activation_dim, dict_size))
+        self.b_enc = nn.Parameter(t.zeros(dict_size))
+        self.W_dec = nn.Parameter(t.nn.init.kaiming_uniform_(t.empty(dict_size, activation_dim)))
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
+        self.set_decoder_norm_to_unit_norm()
+        self.W_enc.data = self.W_dec.data.clone().T
+
     def encode(self, x: t.Tensor, return_active: bool = False, use_threshold: bool = True):
-        post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
+        post_relu_feat_acts_BF = nn.functional.relu((x - self.b_dec) @ self.W_enc + self.b_enc)
 
         if use_threshold:
             encoded_acts_BF = post_relu_feat_acts_BF * (post_relu_feat_acts_BF > self.threshold)
-            if return_active:
-                return encoded_acts_BF, encoded_acts_BF.sum(0) > 0
-            else:
-                return encoded_acts_BF
+        else:
+            # Flatten and perform batch top-k
+            flattened_acts = post_relu_feat_acts_BF.flatten()
+            post_topk = flattened_acts.topk(self.k * x.size(0), sorted=False, dim=-1)
 
-        # Flatten and perform batch top-k
-        flattened_acts = post_relu_feat_acts_BF.flatten()
-        post_topk = flattened_acts.topk(self.k * x.size(0), sorted=False, dim=-1)
+            buffer_BF = t.zeros_like(post_relu_feat_acts_BF)
+            encoded_acts_BF = (
+                buffer_BF.flatten()
+                .scatter(-1, post_topk.indices, post_topk.values)
+                .reshape(buffer_BF.shape)
+            )
 
-        buffer_BF = t.zeros_like(post_relu_feat_acts_BF)
-        encoded_acts_BF = (
-            buffer_BF.flatten()
-            .scatter(-1, post_topk.indices, post_topk.values)
-            .reshape(buffer_BF.shape)
-        )
+        max_act_index = self.group_indices[self.active_groups]
+        encoded_acts_BF[:, max_act_index:] = 0
 
         if return_active:
             return encoded_acts_BF, encoded_acts_BF.sum(0) > 0
@@ -54,7 +82,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
             return encoded_acts_BF
 
     def decode(self, x: t.Tensor) -> t.Tensor:
-        return self.decoder(x) + self.b_dec
+        return x @ self.W_dec + self.b_dec
 
     def forward(self, x: t.Tensor, output_features: bool = False):
         encoded_acts_BF = self.encode(x)
@@ -67,47 +95,52 @@ class BatchTopKSAE(Dictionary, nn.Module):
 
     @t.no_grad()
     def set_decoder_norm_to_unit_norm(self):
-        eps = t.finfo(self.decoder.weight.dtype).eps
-        norm = t.norm(self.decoder.weight.data, dim=0, keepdim=True)
-        self.decoder.weight.data /= norm + eps
+        eps = t.finfo(self.W_dec.dtype).eps
+        norm = t.norm(self.W_dec.data, dim=1, keepdim=True)
+
+        self.W_dec.data /= norm + eps
 
     @t.no_grad()
     def remove_gradient_parallel_to_decoder_directions(self):
-        assert self.decoder.weight.grad is not None
+        assert self.W_dec.grad is not None
+
         parallel_component = einops.einsum(
-            self.decoder.weight.grad,
-            self.decoder.weight.data,
-            "d_in d_sae, d_in d_sae -> d_sae",
+            self.W_dec.grad,
+            self.W_dec.data,
+            "d_sae d_in, d_sae d_in -> d_sae",
         )
-        self.decoder.weight.grad -= einops.einsum(
+        self.W_dec.grad -= einops.einsum(
             parallel_component,
-            self.decoder.weight.data,
-            "d_sae, d_in d_sae -> d_in d_sae",
+            self.W_dec.data,
+            "d_sae, d_sae d_in -> d_sae d_in",
         )
 
+    @t.no_grad()
     def scale_biases(self, scale: float):
-        self.encoder.bias.data *= scale
+        self.b_enc.data *= scale
         self.b_dec.data *= scale
         if self.threshold >= 0:
             self.threshold *= scale
 
     @classmethod
-    def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":
+    def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "MatroyshkaBatchTopKSAE":
         state_dict = t.load(path)
-        dict_size, activation_dim = state_dict["encoder.weight"].shape
+        activation_dim, dict_size = state_dict["W_enc"].shape
         if k is None:
             k = state_dict["k"].item()
         elif "k" in state_dict and k != state_dict["k"].item():
             raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
 
-        autoencoder = cls(activation_dim, dict_size, k)
+        group_sizes = state_dict["group_sizes"].tolist()
+
+        autoencoder = cls(activation_dim, dict_size, k=k, group_sizes=group_sizes)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
 
 
-class BatchTopKTrainer(SAETrainer):
+class MatroyshkaBatchTopKTrainer(SAETrainer):
     def __init__(
         self,
         steps: int,  # total number of steps to train for
@@ -116,7 +149,10 @@ class BatchTopKTrainer(SAETrainer):
         k: int,
         layer: int,
         lm_name: str,
-        dict_class: type = BatchTopKSAE,
+        group_fractions: list[float],
+        group_weights: Optional[list[float]] = None,
+        weights_temperature: float = 1.0,
+        dict_class: type = MatroyshkaBatchTopKSAE,
         auxk_alpha: float = 1 / 32,
         warmup_steps: int = 1000,
         decay_start: Optional[int] = None,  # when does the lr decay start
@@ -144,7 +180,27 @@ class BatchTopKTrainer(SAETrainer):
             t.manual_seed(seed)
             t.cuda.manual_seed_all(seed)
 
-        self.ae = dict_class(activation_dim, dict_size, k)
+        assert isclose(sum(group_fractions), 1.0), "group_fractions must sum to 1.0"
+        # Calculate all groups except the last one
+        group_sizes = [int(f * dict_size) for f in group_fractions[:-1]]
+        # Put remainder in the last group
+        group_sizes.append(dict_size - sum(group_sizes))
+
+        if group_weights is None:
+            group_weights = group_fractions.copy()
+
+        group_weights = apply_temperature(group_weights, weights_temperature)
+
+        assert len(group_sizes) == len(
+            group_weights
+        ), "group_sizes and group_weights must have the same length"
+
+        self.group_fractions = group_fractions
+        self.group_sizes = group_sizes
+        self.group_weights = group_weights
+        self.weights_temperature = weights_temperature
+
+        self.ae = dict_class(activation_dim, dict_size, k, group_sizes)
 
         if device is None:
             self.device = "cuda" if t.cuda.is_available() else "cpu"
@@ -185,7 +241,6 @@ class BatchTopKTrainer(SAETrainer):
     def get_auxiliary_loss(self, x, x_reconstruct, acts):
         dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
         self.dead_features = int(dead_features.sum())
-        
         if dead_features.sum() > 0:
             residual = x.float() - x_reconstruct.float()
             acts_topk_aux = t.topk(
@@ -196,8 +251,9 @@ class BatchTopKTrainer(SAETrainer):
             acts_aux = t.zeros_like(acts[:, dead_features]).scatter(
                 -1, acts_topk_aux.indices, acts_topk_aux.values
             )
-            x_reconstruct_aux = F.linear(acts_aux, self.ae.decoder.weight[:, dead_features])
+            x_reconstruct_aux = F.linear(acts_aux, self.ae.W_dec[dead_features, :].T)
             l2_loss_aux = (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
+
             return l2_loss_aux
         else:
             return t.tensor(0, dtype=x.dtype, device=x.device)
@@ -222,9 +278,24 @@ class BatchTopKTrainer(SAETrainer):
                         (1 - self.threshold_beta) * min_activation
                     )
 
-        x_hat = self.ae.decode(f)
+        x_reconstruct = t.zeros_like(x) + self.ae.b_dec
+        total_l2_loss = 0.0
+        l2_losses = t.tensor([]).to(self.device)
 
-        e = x_hat - x
+        for i in range(self.ae.active_groups):
+            group_start = self.ae.group_indices[i]
+            group_end = self.ae.group_indices[i + 1]
+            W_dec_slice = self.ae.W_dec[group_start:group_end, :]
+            acts_slice = f[:, group_start:group_end]
+            x_reconstruct = x_reconstruct + acts_slice @ W_dec_slice
+
+            l2_loss = (x_reconstruct - x).pow(2).sum(dim=-1).mean() * self.group_weights[i]
+            total_l2_loss += l2_loss
+            l2_losses = t.cat([l2_losses, l2_loss.unsqueeze(0)])
+
+        min_l2_loss = l2_losses.min().item()
+        max_l2_loss = l2_losses.max().item()
+        mean_l2_loss = l2_losses.mean()
 
         self.effective_l0 = self.k
 
@@ -234,20 +305,25 @@ class BatchTopKTrainer(SAETrainer):
         self.num_tokens_since_fired += num_tokens_in_step
         self.num_tokens_since_fired[did_fire] = 0
 
-        auxk_loss = self.get_auxiliary_loss(x, x_hat, f)
+        auxk_loss = self.get_auxiliary_loss(x, x_reconstruct, f)
 
-        l2_loss = e.pow(2).sum(dim=-1).mean()
         auxk_loss = auxk_loss.sum(dim=-1).mean()
-        loss = l2_loss + self.auxk_alpha * auxk_loss
+        loss = mean_l2_loss + self.auxk_alpha * auxk_loss
 
         if not logging:
             return loss
         else:
             return namedtuple("LossLog", ["x", "x_hat", "f", "losses"])(
                 x,
-                x_hat,
+                x_reconstruct,
                 f,
-                {"l2_loss": l2_loss.item(), "auxk_loss": auxk_loss.item(), "loss": loss.item()},
+                {
+                    "l2_loss": mean_l2_loss.item(),
+                    "auxk_loss": auxk_loss.item(),
+                    "loss": loss.item(),
+                    "min_l2_loss": min_l2_loss,
+                    "max_l2_loss": max_l2_loss,
+                },
             )
 
     def update(self, step, x):
@@ -273,8 +349,8 @@ class BatchTopKTrainer(SAETrainer):
     @property
     def config(self):
         return {
-            "trainer_class": "BatchTopKTrainer",
-            "dict_class": "BatchTopKSAE",
+            "trainer_class": "MatroyshkaBatchTopKTrainer",
+            "dict_class": "MatroyshkaBatchTopKSAE",
             "lr": self.lr,
             "steps": self.steps,
             "auxk_alpha": self.auxk_alpha,
@@ -286,6 +362,10 @@ class BatchTopKTrainer(SAETrainer):
             "seed": self.seed,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
+            "group_fractions": self.group_fractions,
+            "group_weights": self.group_weights,
+            "group_sizes": self.group_sizes,
+            "weights_temperature": self.weights_temperature,
             "k": self.ae.k.item(),
             "device": self.device,
             "layer": self.layer,

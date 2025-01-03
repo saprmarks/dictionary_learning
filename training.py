@@ -3,7 +3,7 @@ Training dictionaries
 """
 
 import json
-import multiprocessing as mp
+import torch.multiprocessing as mp
 import os
 from queue import Empty
 from typing import Optional
@@ -38,6 +38,7 @@ def log_stats(
     activations_split_by_head: bool,
     transcoder: bool,
     log_queues: list=[],
+    verbose: bool=False,
 ):
     with t.no_grad():
         # quick hack to make sure all trainers get the same x
@@ -63,11 +64,16 @@ def log_stats(
                 # L0
                 l0 = (f != 0).float().sum(dim=-1).mean().item()
 
+            if verbose:
+                print(f"Step {step}: L0 = {l0}, frac_variance_explained = {frac_variance_explained}")
+
             # log parameters from training
-            log.update({f"{k}": v for k, v in losslog.items()})
+            log.update({f"{k}": v.cpu().item() if isinstance(v, t.Tensor) else v for k, v in losslog.items()})
             log[f"l0"] = l0
             trainer_log = trainer.get_logging_parameters()
             for name, value in trainer_log.items():
+                if isinstance(value, t.Tensor):
+                    value = value.cpu().item()
                 log[f"{name}"] = value
 
             if log_queues:
@@ -116,6 +122,7 @@ def trainSAE(
     transcoder:bool=False,
     run_cfg:dict={},
     normalize_activations:bool=False,
+    verbose:bool=False,
 ):
     """
     Train SAEs using the given trainers
@@ -126,7 +133,9 @@ def trainSAE(
     """
 
     trainers = []
-    for config in trainer_configs:
+    for i, config in enumerate(trainer_configs):
+        if "wandb_name" in config:
+            config["wandb_name"] = f"{config['wandb_name']}_trainer_{i}"
         trainer_class = config["trainer"]
         del config["trainer"]
         trainers.append(trainer_class(**config))
@@ -135,10 +144,16 @@ def trainSAE(
     log_queues = []
 
     if use_wandb:
+        # Note: If encountering wandb and CUDA related errors, try setting start method to spawn in the if __name__ == "__main__" block
+        # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.set_start_method
+        # Everything should work fine with the default fork method but it may not be as robust
         for i, trainer in enumerate(trainers):
             log_queue = mp.Queue()
             log_queues.append(log_queue)
             wandb_config = trainer.config | run_cfg
+            # Make sure wandb config doesn't contain any CUDA tensors
+            wandb_config = {k: v.cpu().item() if isinstance(v, t.Tensor) else v 
+                          for k, v in wandb_config.items()}
             wandb_process = mp.Process(
                 target=new_wandb_process,
                 args=(wandb_config, log_queue, wandb_entity, wandb_project),
@@ -183,9 +198,9 @@ def trainSAE(
             break
 
         # logging
-        if log_steps is not None and step % log_steps == 0:
+        if (use_wandb or verbose) and step % log_steps == 0:
             log_stats(
-                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues
+                trainers, step, act, activations_split_by_head, transcoder, log_queues=log_queues, verbose=verbose
             )
 
         # saving

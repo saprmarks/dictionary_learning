@@ -19,31 +19,31 @@ from dictionary_learning.evaluation import evaluate
 
 EXPECTED_RESULTS = {
     "AutoEncoderTopK": {
-        "l2_loss": 4.325331306457519,
-        "l1_loss": 47.92763671875,
+        "l2_loss": 4.362327718734742,
+        "l1_loss": 50.94957427978515,
         "l0": 40.0,
-        "frac_variance_explained": 0.9584966480731965,
-        "cossim": 0.948570293188095,
-        "l2_ratio": 0.94872345328331,
-        "relative_reconstruction_bias": 0.9998040139675141,
-        "loss_original": 3.328495955467224,
-        "loss_reconstructed": 3.819682216644287,
-        "loss_zero": 13.250199031829833,
-        "frac_recovered": 0.9503251194953919,
+        "frac_variance_explained": 0.9578053653240204,
+        "cossim": 0.9478691875934601,
+        "l2_ratio": 0.9478908002376556,
+        "relative_reconstruction_bias": 0.999762898683548,
+        "loss_original": 3.3361297130584715,
+        "loss_reconstructed": 3.8404462814331053,
+        "loss_zero": 13.251659297943116,
+        "frac_recovered": 0.948982036113739,
         "frac_alive": 0.99951171875,
     },
     "AutoEncoder": {
-        "l2_loss": 6.822399997711182,
-        "l1_loss": 19.381900978088378,
-        "l0": 37.4492919921875,
-        "frac_variance_explained": 0.8993505954742431,
-        "cossim": 0.8791077017784119,
-        "l2_ratio": 0.7455410599708557,
-        "relative_reconstruction_bias": 0.9595056653022767,
-        "loss_original": 3.3284960985183716,
-        "loss_reconstructed": 5.203806638717651,
-        "loss_zero": 13.250199031829833,
-        "frac_recovered": 0.8104169845581055,
+        "l2_loss": 6.822444677352905,
+        "l1_loss": 19.382131576538086,
+        "l0": 37.45087890625,
+        "frac_variance_explained": 0.8993501663208008,
+        "cossim": 0.8791120409965515,
+        "l2_ratio": 0.74552041888237,
+        "relative_reconstruction_bias": 0.9595054805278778,
+        "loss_original": 3.3361297130584715,
+        "loss_reconstructed": 5.208198881149292,
+        "loss_zero": 13.251659297943116,
+        "frac_recovered": 0.8106247961521149,
         "frac_alive": 0.99658203125,
     },
 }
@@ -62,7 +62,7 @@ def test_sae_training():
     """End to end test for training an SAE. Takes ~2 minutes on an RTX 3090.
     This isn't a nice suite of unit tests, but it's better than nothing.
     I have observed that results can slightly vary with library versions. For full determinism,
-    use pytorch 2.2.0 and nnsight 0.3.3.
+    use pytorch 2.5.1 and nnsight 0.3.7.
 
     NOTE: `dictionary_learning` is meant to be used as a submodule. Thus, to run this test, you need to use `dictionary_learning` as a submodule
     and run the test from the root of the repository using `pytest -s`. Refer to https://github.com/adamkarvonen/dictionary_learning_demo for an example"""

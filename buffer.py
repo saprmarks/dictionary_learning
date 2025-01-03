@@ -26,7 +26,8 @@ class ActivationBuffer:
                  ctx_len=128, # length of each context
                  refresh_batch_size=512, # size of batches in which to process the data when adding to buffer
                  out_batch_size=8192, # size of batches in which to yield activations
-                 device='cpu' # device on which to store the activations
+                 device='cpu', # device on which to store the activations
+                 remove_bos: bool = False,
                  ):
         
         if io not in ['in', 'out']:
@@ -54,6 +55,7 @@ class ActivationBuffer:
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
+        self.remove_bos = remove_bos
     
     def __iter__(self):
         return self
@@ -131,6 +133,9 @@ class ActivationBuffer:
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
                 hidden_states = hidden_states[0]
+            if self.remove_bos:
+                hidden_states = hidden_states[:, 1:, :]
+                attn_mask = attn_mask[:, 1:]
             hidden_states = hidden_states[attn_mask != 0]
 
             remaining_space = self.activation_buffer_size - current_idx
