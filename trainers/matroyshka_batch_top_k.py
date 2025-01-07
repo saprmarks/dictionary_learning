@@ -44,8 +44,8 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
         assert all(s > 0 for s in group_sizes), "all group sizes must be positive"
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
-        self.register_buffer("k", t.tensor(k))
-        self.register_buffer("threshold", t.tensor(-1.0))
+        self.register_buffer("k", t.tensor(k, dtype=t.int))
+        self.register_buffer("threshold", t.tensor(-1.0, dtype=t.float32))
 
         self.active_groups = len(group_sizes)
         group_indices = [0] + list(t.cumsum(t.tensor(group_sizes), dim=0))
@@ -240,13 +240,14 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         # l0 = (f != 0).float().sum(dim=-1).mean().item()
 
         if step > self.threshold_start_step:
-            with t.no_grad():
+            device_type = 'cuda' if x.is_cuda else 'cpu'
+            with t.autocast(device_type=device_type, enabled=False), t.no_grad():
                 active = f[f > 0]
 
                 if active.size(0) == 0:
                     min_activation = 0.0
                 else:
-                    min_activation = active.min().detach()
+                    min_activation = active.min().detach().to(dtype=t.float32)
 
                 if self.ae.threshold < 0:
                     self.ae.threshold = min_activation
