@@ -5,10 +5,10 @@ import json
 import os
 from nnsight import LanguageModel
 
-from dictionary_learning.trainers.top_k import AutoEncoderTopK
-from dictionary_learning.trainers.batch_top_k import BatchTopKSAE
-from dictionary_learning.trainers.matroyshka_batch_top_k import MatroyshkaBatchTopKSAE
-from dictionary_learning.dictionary import (
+from .trainers.top_k import AutoEncoderTopK
+from .trainers.batch_top_k import BatchTopKSAE
+from .trainers.matroyshka_batch_top_k import MatroyshkaBatchTopKSAE
+from .dictionary import (
     AutoEncoder,
     GatedAutoEncoder,
     AutoEncoderNew,
