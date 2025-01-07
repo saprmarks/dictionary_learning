@@ -21,8 +21,8 @@ class BatchTopKSAE(Dictionary, nn.Module):
         self.dict_size = dict_size
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
-        self.register_buffer("k", t.tensor(k))
-        self.register_buffer("threshold", t.tensor(-1.0))
+        self.register_buffer("k", t.tensor(k, dtype=t.int))
+        self.register_buffer("threshold", t.tensor(-1.0, dtype=t.float32))
 
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
         self.decoder.weight.data = set_decoder_norm_to_unit_norm(
@@ -186,13 +186,14 @@ class BatchTopKTrainer(SAETrainer):
         # l0 = (f != 0).float().sum(dim=-1).mean().item()
 
         if step > self.threshold_start_step:
-            with t.no_grad():
+            device_type = 'cuda' if x.is_cuda else 'cpu'
+            with t.autocast(device_type=device_type, enabled=False), t.no_grad():
                 active = f[f > 0]
 
                 if active.size(0) == 0:
                     min_activation = 0.0
                 else:
-                    min_activation = active.min().detach()
+                    min_activation = active.min().detach().to(dtype=t.float32)
 
                 if self.ae.threshold < 0:
                     self.ae.threshold = min_activation
@@ -232,6 +233,7 @@ class BatchTopKTrainer(SAETrainer):
     def update(self, step, x):
         if step == 0:
             median = self.geometric_median(x)
+            median = median.to(self.ae.b_dec.dtype)
             self.ae.b_dec.data = median
 
         # Make sure the decoder is still unit-norm

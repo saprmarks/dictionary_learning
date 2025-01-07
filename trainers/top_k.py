@@ -66,8 +66,8 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         self.dict_size = dict_size
 
         assert isinstance(k, int) and k > 0, f"k={k} must be a positive integer"
-        self.register_buffer("k", t.tensor(k))
-        self.register_buffer("threshold", t.tensor(-1.0))
+        self.register_buffer("k", t.tensor(k, dtype=t.int))
+        self.register_buffer("threshold", t.tensor(-1.0, dtype=t.float32))
 
         self.decoder = nn.Linear(dict_size, activation_dim, bias=False)
         self.decoder.weight.data = set_decoder_norm_to_unit_norm(
@@ -223,10 +223,11 @@ class TopKTrainer(SAETrainer):
         f, top_acts, top_indices = self.ae.encode(x, return_topk=True, use_threshold=False)
 
         if step > self.threshold_start_step:
-            with t.no_grad():
+            device_type = 'cuda' if x.is_cuda else 'cpu'
+            with t.autocast(device_type=device_type, enabled=False), t.no_grad():
                 active = top_acts.clone().detach()
                 active[active <= 0] = float("inf")
-                min_activations = active.min(dim=1).values
+                min_activations = active.min(dim=1).values.to(dtype=t.float32)
                 min_activation = min_activations.mean()
 
                 B, K = active.shape
