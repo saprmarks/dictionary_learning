@@ -7,6 +7,7 @@ import torch.multiprocessing as mp
 import os
 from queue import Empty
 from typing import Optional
+from contextlib import nullcontext
 
 import torch as t
 from tqdm import tqdm
@@ -123,6 +124,8 @@ def trainSAE(
     run_cfg:dict={},
     normalize_activations:bool=False,
     verbose:bool=False,
+    device:str="cuda",
+    autocast_dtype: t.dtype = t.float32,
 ):
     """
     Train SAEs using the given trainers
@@ -130,7 +133,12 @@ def trainSAE(
     If normalize_activations is True, the activations will be normalized to have unit mean squared norm.
     The autoencoders weights will be scaled before saving, so the activations don't need to be scaled during inference.
     This is very helpful for hyperparameter transfer between different layers and models.
+
+    Setting autocast_dtype to t.bfloat16 provides a significant speedup with minimal change in performance.
     """
+
+    device_type = "cuda" if "cuda" in device else "cpu"
+    autocast_context = nullcontext() if device_type == "cpu" else t.autocast(device_type=device_type, dtype=autocast_dtype)
 
     trainers = []
     for i, config in enumerate(trainer_configs):
@@ -189,7 +197,7 @@ def trainSAE(
 
     for step, act in enumerate(tqdm(data, total=steps)):
 
-        act = act.to(dtype=t.float32)
+        act = act.to(dtype=autocast_dtype)
 
         if normalize_activations:
             act /= norm_factor
@@ -226,7 +234,8 @@ def trainSAE(
 
         # training
         for trainer in trainers:
-            trainer.update(step, act)
+            with autocast_context:
+                trainer.update(step, act)
 
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):
