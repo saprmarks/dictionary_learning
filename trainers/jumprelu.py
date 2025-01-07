@@ -150,6 +150,7 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         # I had poor results when using log_threshold and it would complicate the scale_biases() function
 
         sparsity_scale = self.sparsity_warmup_fn(step)
+        x = x.to(self.ae.W_enc.dtype)
 
         pre_jump = x @ self.ae.W_enc + self.ae.b_enc
         f = JumpReLUFunction.apply(pre_jump, self.ae.threshold, self.bandwidth)
