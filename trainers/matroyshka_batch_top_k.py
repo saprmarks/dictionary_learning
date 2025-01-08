@@ -137,7 +137,6 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         lm_name: str,
         group_fractions: list[float],
         group_weights: Optional[list[float]] = None,
-        weights_temperature: float = 1.0,
         dict_class: type = MatroyshkaBatchTopKSAE,
         lr: Optional[float] = None,
         auxk_alpha: float = 1 / 32,
@@ -174,9 +173,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         group_sizes.append(dict_size - sum(group_sizes))
 
         if group_weights is None:
-            group_weights = group_fractions.copy()
-
-        group_weights = apply_temperature(group_weights, weights_temperature)
+            group_weights = [(1.0 / len(group_sizes))] * len(group_sizes)
 
         assert len(group_sizes) == len(
             group_weights
@@ -185,7 +182,6 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         self.group_fractions = group_fractions
         self.group_sizes = group_sizes
         self.group_weights = group_weights
-        self.weights_temperature = weights_temperature
 
         self.ae = dict_class(activation_dim, dict_size, k, group_sizes)
 
@@ -349,7 +345,6 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
             "group_fractions": self.group_fractions,
             "group_weights": self.group_weights,
             "group_sizes": self.group_sizes,
-            "weights_temperature": self.weights_temperature,
             "k": self.ae.k.item(),
             "device": self.device,
             "layer": self.layer,
