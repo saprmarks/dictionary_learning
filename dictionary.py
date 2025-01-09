@@ -94,7 +94,7 @@ class ReLUAutoEncoder(Dictionary, nn.Module):
         self.encoder.bias.data *= scale
         self.decoder.bias.data *= scale
 
-    def from_pretrained(path, device=None):
+    def from_pretrained(path, dtype=t.float, device=None):
         """
         Load a pretrained autoencoder from a file.
         """
@@ -103,7 +103,7 @@ class ReLUAutoEncoder(Dictionary, nn.Module):
         autoencoder = ReLUAutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
-            autoencoder.to(device)
+            autoencoder.to(device=device, dtype=dtype)
         return autoencoder
     
 
