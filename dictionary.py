@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 import torch as t
 import torch.nn as nn
 import torch.nn.init as init
-import einops
 
 
 class Dictionary(ABC, nn.Module):
@@ -40,9 +39,68 @@ class Dictionary(ABC, nn.Module):
         pass
 
 
-class AutoEncoder(Dictionary, nn.Module):
+class AutoEncoderReLU(Dictionary, nn.Module):
     """
-    A one-layer autoencoder.
+    The Standard ReLU SAE autoencoder architecture and initialization used in https://transformer-circuits.pub/2024/april-update/index.html#training-saes
+    """
+
+    def __init__(self, activation_dim, dict_size):
+        super().__init__()
+        self.activation_dim = activation_dim
+        self.dict_size = dict_size
+        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
+        self.decoder = nn.Linear(dict_size, activation_dim, bias=True)
+
+        # initialize encoder and decoder weights
+        w = t.randn(activation_dim, dict_size)
+        ## normalize columns of w
+        w = w / w.norm(dim=0, keepdim=True) * 0.1
+        ## set encoder and decoder weights
+        self.encoder.weight = nn.Parameter(w.clone().T)
+        self.decoder.weight = nn.Parameter(w.clone())
+
+        # initialize biases to zeros
+        init.zeros_(self.encoder.bias)
+        init.zeros_(self.decoder.bias)
+
+    def encode(self, x):
+        return nn.ReLU()(self.encoder(x))
+
+    def decode(self, f):
+        return self.decoder(f)
+
+    def forward(self, x, output_features=False):
+        """
+        Forward pass of an autoencoder.
+        x : activations to be autoencoded
+        """
+        if not output_features:
+            return self.decode(self.encode(x))
+        else:  # TODO rewrite so that x_hat depends on f
+            f = self.encode(x)
+            x_hat = self.decode(f)
+            # multiply f by decoder column norms
+            f = f * self.decoder.weight.norm(dim=0, keepdim=True)
+            return x_hat, f
+
+    def from_pretrained(path, device=None):
+        """
+        Load a pretrained autoencoder from a file.
+        """
+        state_dict = t.load(path)
+        dict_size, activation_dim = state_dict["encoder.weight"].shape
+        autoencoder = AutoEncoderReLU(activation_dim, dict_size)
+        autoencoder.load_state_dict(state_dict)
+        if device is not None:
+            autoencoder.to(device)
+        return autoencoder
+    
+
+
+class AutoEncoderTowardsMonosemanticity(Dictionary, nn.Module):
+    """
+    Standard ReLU SAE as defined in Towards Monosemanticity: https://transformer-circuits.pub/2024/towards-monosemanticity/index.html
+    This is a legacy implementation, we recommend using AutoEncoderReLU by default.
     """
 
     def __init__(self, activation_dim, dict_size):
@@ -364,61 +422,3 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         if device is not None:
             device = autoencoder.W_enc.device
         return autoencoder.to(dtype=dtype, device=device)
-
-
-# TODO merge this with AutoEncoder
-class AutoEncoderNew(Dictionary, nn.Module):
-    """
-    The autoencoder architecture and initialization used in https://transformer-circuits.pub/2024/april-update/index.html#training-saes
-    """
-
-    def __init__(self, activation_dim, dict_size):
-        super().__init__()
-        self.activation_dim = activation_dim
-        self.dict_size = dict_size
-        self.encoder = nn.Linear(activation_dim, dict_size, bias=True)
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=True)
-
-        # initialize encoder and decoder weights
-        w = t.randn(activation_dim, dict_size)
-        ## normalize columns of w
-        w = w / w.norm(dim=0, keepdim=True) * 0.1
-        ## set encoder and decoder weights
-        self.encoder.weight = nn.Parameter(w.clone().T)
-        self.decoder.weight = nn.Parameter(w.clone())
-
-        # initialize biases to zeros
-        init.zeros_(self.encoder.bias)
-        init.zeros_(self.decoder.bias)
-
-    def encode(self, x):
-        return nn.ReLU()(self.encoder(x))
-
-    def decode(self, f):
-        return self.decoder(f)
-
-    def forward(self, x, output_features=False):
-        """
-        Forward pass of an autoencoder.
-        x : activations to be autoencoded
-        """
-        if not output_features:
-            return self.decode(self.encode(x))
-        else:  # TODO rewrite so that x_hat depends on f
-            f = self.encode(x)
-            x_hat = self.decode(f)
-            # multiply f by decoder column norms
-            f = f * self.decoder.weight.norm(dim=0, keepdim=True)
-            return x_hat, f
-
-    def from_pretrained(path, device=None):
-        """
-        Load a pretrained autoencoder from a file.
-        """
-        state_dict = t.load(path)
-        dict_size, activation_dim = state_dict["encoder.weight"].shape
-        autoencoder = AutoEncoderNew(activation_dim, dict_size)
-        autoencoder.load_state_dict(state_dict)
-        if device is not None:
-            autoencoder.to(device)
-        return autoencoder

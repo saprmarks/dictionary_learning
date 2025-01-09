@@ -10,10 +10,7 @@ from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
 from dictionary_learning.utils import hf_dataset_to_generator, get_nested_folders, load_dictionary
 from dictionary_learning.buffer import ActivationBuffer
 from dictionary_learning.dictionary import (
-    AutoEncoder,
-    GatedAutoEncoder,
-    AutoEncoderNew,
-    JumpReluAutoEncoder,
+    AutoEncoderTowardsMonosemanticity,
 )
 from dictionary_learning.evaluation import evaluate
 
@@ -32,7 +29,7 @@ EXPECTED_RESULTS = {
         "frac_recovered": 0.948982036113739,
         "frac_alive": 0.99951171875,
     },
-    "AutoEncoder": {
+    "AutoEncoderTowardsMonosemanticity": {
         "l2_loss": 6.822444677352905,
         "l1_loss": 19.382131576538086,
         "l0": 37.45087890625,
@@ -145,7 +142,7 @@ def test_sae_training():
         [
             {
                 "trainer": StandardTrainer,
-                "dict_class": AutoEncoder,
+                "dict_class": AutoEncoderTowardsMonosemanticity,
                 "activation_dim": activation_dim,
                 "dict_size": expansion_factor * activation_dim,
                 "lr": learning_rate,
