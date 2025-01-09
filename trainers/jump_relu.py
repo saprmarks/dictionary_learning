@@ -75,6 +75,8 @@ class JumpReluTrainer(SAETrainer):
         self.optimizer.zero_grad()
         loss = self.loss(x)
         loss.backward()
+        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 100000)
+        self.ae.make_decoder_weights_and_grad_unit_norm()
         self.optimizer.step()
 
     @property

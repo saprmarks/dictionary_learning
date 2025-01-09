@@ -339,7 +339,15 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         x_std = x.std(dim=-1, keepdim=True)
         x = x / (x_std + 1e-5)
         return x, x_mean, x_std
-
+    
+    @t.no_grad()
+    def make_decoder_weights_and_grad_unit_norm(self):
+        W_dec_normed = self.W_dec / self.W_dec.norm(dim=-1, keepdim=True)
+        W_dec_grad_proj = (self.W_dec.grad * W_dec_normed).sum(
+            -1, keepdim=True
+        ) * W_dec_normed
+        self.W_dec.grad -= W_dec_grad_proj
+        self.W_dec.data = W_dec_normed
 
     def encode(self, x, output_pre_jump=False):
         if self.normalize_input:
