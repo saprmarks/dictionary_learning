@@ -30,6 +30,13 @@ class Dictionary(ABC, nn.Module):
         """
         pass
 
+    @abstractmethod
+    def scale_biases(self, scale: float):
+        """
+        Scale the biases of the encoder and decoder.
+        """
+        pass
+
     @classmethod
     @abstractmethod
     def from_pretrained(cls, path, device=None, **kwargs) -> "Dictionary":
@@ -82,6 +89,10 @@ class ReLUAutoEncoder(Dictionary, nn.Module):
             # multiply f by decoder column norms
             f = f * self.decoder.weight.norm(dim=0, keepdim=True)
             return x_hat, f
+
+    def scale_biases(self, scale: float):
+        self.encoder.bias.data *= scale
+        self.bias.data *= scale
 
     def from_pretrained(path, device=None):
         """
