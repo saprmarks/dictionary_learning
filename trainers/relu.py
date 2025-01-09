@@ -6,7 +6,7 @@ A legacy implementation of the standard SAE training scheme from Towards Monosem
 import torch as t
 from typing import Optional
 
-from ..trainers.trainer import SAETrainer, get_lr_schedule, get_sparsity_warmup_fn, ConstrainedAdam
+from .trainer import SAETrainer, get_lr_schedule, get_sparsity_warmup_fn, ConstrainedAdam
 from ..config import DEBUG
 from ..dictionary import AutoEncoderReLU
 from collections import namedtuple
@@ -129,7 +129,7 @@ class ReLUTrainer(SAETrainer):
 
 
 
-class StandardTrainerTowardsMonosemanticity(SAETrainer):
+class ReLUTrainerTowardsMonosemanticity(SAETrainer):
     """
     Standard SAE training scheme following Towards Monosemanticity. Decoder column norms are constrained to 1.
     """
@@ -148,7 +148,7 @@ class StandardTrainerTowardsMonosemanticity(SAETrainer):
                  resample_steps:Optional[int]=None, # how often to resample neurons
                  seed:Optional[int]=None,
                  device=None,
-                 wandb_name:Optional[str]='StandardTrainer',
+                 wandb_name:Optional[str]='ReLUTrainer',
                  submodule_name:Optional[str]=None,
     ):
         super().__init__(seed)
@@ -275,7 +275,7 @@ class StandardTrainerTowardsMonosemanticity(SAETrainer):
     def config(self):
         return {
             'dict_class': 'AutoEncoder',
-            'trainer_class' : 'StandardTrainerTowardsMonosemanticity',
+            'trainer_class' : 'ReLUTrainerTowardsMonosemanticity',
             'activation_dim': self.ae.activation_dim,
             'dict_size': self.ae.dict_size,
             'lr' : self.lr,

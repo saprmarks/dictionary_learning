@@ -5,7 +5,7 @@ import json
 import random
 
 from dictionary_learning.training import trainSAE
-from dictionary_learning.trainers.standard import StandardTrainer
+from dictionary_learning.trainers.relu import ReLUTrainer
 from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
 from dictionary_learning.utils import hf_dataset_to_generator, get_nested_folders, load_dictionary
 from dictionary_learning.buffer import ActivationBuffer
@@ -141,7 +141,7 @@ def test_sae_training():
     trainer_configs.extend(
         [
             {
-                "trainer": StandardTrainer,
+                "trainer": ReLUTrainer,
                 "dict_class": AutoEncoderTowardsMonosemanticity,
                 "activation_dim": activation_dim,
                 "dict_size": expansion_factor * activation_dim,
@@ -153,7 +153,7 @@ def test_sae_training():
                 "steps": steps,
                 "resample_steps": resample_steps,
                 "seed": RANDOM_SEED,
-                "wandb_name": f"StandardTrainer-{MODEL_NAME}-{submodule_name}",
+                "wandb_name": f"ReLUTrainer-{MODEL_NAME}-{submodule_name}",
                 "layer": LAYER,
                 "lm_name": MODEL_NAME,
                 "device": DEVICE,

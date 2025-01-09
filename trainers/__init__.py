@@ -1,5 +1,5 @@
-from .standard import StandardTrainer
-from .gdm import GatedSAETrainer
+from .relu import ReLUTrainer
+from .gated import GatedSAETrainer
 from .p_anneal import PAnnealTrainer
 from .gated_anneal import GatedAnnealTrainer
 from .top_k import TopKTrainer

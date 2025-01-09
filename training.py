@@ -16,7 +16,7 @@ import wandb
 
 from .dictionary import AutoEncoderReLU
 from .evaluation import evaluate
-from .trainers.standard import StandardTrainer
+from .trainers.relu import ReLUTrainer
 
 
 def new_wandb_process(config, log_queue, entity, project):
