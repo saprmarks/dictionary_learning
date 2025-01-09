@@ -92,7 +92,7 @@ class ReLUAutoEncoder(Dictionary, nn.Module):
 
     def scale_biases(self, scale: float):
         self.encoder.bias.data *= scale
-        self.bias.data *= scale
+        self.decoder.bias.data *= scale
 
     def from_pretrained(path, device=None):
         """
