@@ -48,12 +48,12 @@ def geometric_median(points: t.Tensor, max_iter: int = 100, tol: float = 1e-5):
     return guess
 
 
-class AutoEncoderTopK(Dictionary, nn.Module):
+class TopKAutoEncoder(Dictionary, nn.Module):
     """
     The top-k autoencoder architecture and initialization used in https://arxiv.org/abs/2406.04093
     NOTE: (From Adam Karvonen) There is an unmaintained implementation using Triton kernels in the topk-triton-implementation branch.
     We abandoned it as we didn't notice a significant speedup and it added complications, which are noted
-    in the AutoEncoderTopK class docstring in that branch.
+    in the TopKAutoEncoder class docstring in that branch.
 
     With some additional effort, you can train a Top-K SAE with the Triton kernels and modify the state dict for compatibility with this class.
     Notably, the Triton kernels currently have the decoder to be stored in nn.Parameter, not nn.Linear, and the decoder weights must also
@@ -134,7 +134,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         elif "k" in state_dict and k != state_dict["k"].item():
             raise ValueError(f"k={k} != {state_dict['k'].item()}=state_dict['k']")
 
-        autoencoder = AutoEncoderTopK(activation_dim, dict_size, k)
+        autoencoder = TopKAutoEncoder(activation_dim, dict_size, k)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
@@ -154,7 +154,7 @@ class TopKTrainer(SAETrainer):
         k: int,
         layer: int,
         lm_name: str,
-        dict_class: type = AutoEncoderTopK,
+        dict_class: type = TopKAutoEncoder,
         lr: Optional[float] = None,
         auxk_alpha: float = 1 / 32,  # see Appendix A.2
         warmup_steps: int = 1000,
@@ -163,7 +163,7 @@ class TopKTrainer(SAETrainer):
         threshold_start_step: int = 1000,
         seed: Optional[int] = None,
         device: Optional[str] = None,
-        wandb_name: str = "AutoEncoderTopK",
+        wandb_name: str = "TopKAutoEncoder",
         submodule_name: Optional[str] = None,
     ):
         super().__init__(seed)
@@ -341,7 +341,7 @@ class TopKTrainer(SAETrainer):
     def config(self):
         return {
             "trainer_class": "TopKTrainer",
-            "dict_class": "AutoEncoderTopK",
+            "dict_class": "TopKAutoEncoder",
             "lr": self.lr,
             "steps": self.steps,
             "auxk_alpha": self.auxk_alpha,

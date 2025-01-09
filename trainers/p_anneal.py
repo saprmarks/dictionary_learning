@@ -4,7 +4,7 @@ from typing import Optional
 Implements the standard SAE training scheme.
 """
 
-from ..dictionary import AutoEncoderReLU
+from ..dictionary import ReLUAutoEncoder
 from ..trainers.trainer import SAETrainer, get_lr_schedule, get_sparsity_warmup_fn, ConstrainedAdam
 from ..config import DEBUG
 
@@ -19,7 +19,7 @@ class PAnnealTrainer(SAETrainer):
                  dict_size: int,
                  layer: int,
                  lm_name: str,
-                 dict_class: type = AutoEncoderReLU,
+                 dict_class: type = ReLUAutoEncoder,
                  lr: float = 1e-3,
                  warmup_steps: int = 1000, # lr warmup period at start of training and after each resample
                  decay_start: Optional[int] = None, # step at which to start decaying lr

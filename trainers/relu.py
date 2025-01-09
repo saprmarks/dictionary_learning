@@ -8,7 +8,7 @@ from typing import Optional
 
 from .trainer import SAETrainer, get_lr_schedule, get_sparsity_warmup_fn, ConstrainedAdam
 from ..config import DEBUG
-from ..dictionary import AutoEncoderReLU
+from ..dictionary import ReLUAutoEncoder
 from collections import namedtuple
 
 
@@ -25,7 +25,7 @@ class ReLUTrainer(SAETrainer):
                  dict_size: int,
                  layer: int,
                  lm_name: str,
-                 dict_class=AutoEncoderReLU,
+                 dict_class=ReLUAutoEncoder,
                  lr:float=1e-3,
                  l1_penalty:float=1e-1,
                  warmup_steps:int=1000, # lr warmup period at start of training
@@ -139,7 +139,7 @@ class ReLUTrainerTowardsMonosemanticity(SAETrainer):
                  dict_size: int,
                  layer: int,
                  lm_name: str,
-                 dict_class=AutoEncoderReLU,
+                 dict_class=ReLUAutoEncoder,
                  lr:float=1e-3,
                  l1_penalty:float=1e-1,
                  warmup_steps:int=1000, # lr warmup period at start of training and after each resample

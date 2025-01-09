@@ -39,7 +39,7 @@ class Dictionary(ABC, nn.Module):
         pass
 
 
-class AutoEncoderReLU(Dictionary, nn.Module):
+class ReLUAutoEncoder(Dictionary, nn.Module):
     """
     The Standard ReLU SAE autoencoder architecture and initialization used in https://transformer-circuits.pub/2024/april-update/index.html#training-saes
     """
@@ -89,18 +89,17 @@ class AutoEncoderReLU(Dictionary, nn.Module):
         """
         state_dict = t.load(path)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
-        autoencoder = AutoEncoderReLU(activation_dim, dict_size)
+        autoencoder = ReLUAutoEncoder(activation_dim, dict_size)
         autoencoder.load_state_dict(state_dict)
         if device is not None:
             autoencoder.to(device)
         return autoencoder
     
 
-
-class AutoEncoderTowardsMonosemanticity(Dictionary, nn.Module):
+class TowardsMonosemanticityAutoEncoder(Dictionary, nn.Module):
     """
     Standard ReLU SAE as defined in Towards Monosemanticity: https://transformer-circuits.pub/2024/towards-monosemanticity/index.html
-    This is a legacy implementation, we recommend using AutoEncoderReLU by default.
+    This is a legacy implementation, we recommend using ReLUAutoEncoder by default.
     """
 
     def __init__(self, activation_dim, dict_size):
