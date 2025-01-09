@@ -11,7 +11,7 @@ from .trainers.matroyshka_batch_top_k import MatroyshkaBatchTopKSAE
 from .dictionary import (
     ReLUAutoEncoder,
     GatedAutoEncoder,
-    TowardsMonosemanticityAutoEncoder,
+    ReLUAutoEncoderTowardsMonosemanticity,
     JumpReluAutoEncoder,
 )
 
@@ -69,8 +69,8 @@ def load_dictionary(base_path: str, device: str) -> tuple:
         dictionary = ReLUAutoEncoder.from_pretrained(ae_path, device=device)
     elif dict_class == "GatedAutoEncoder":
         dictionary = GatedAutoEncoder.from_pretrained(ae_path, device=device)
-    elif dict_class == "TowardsMonosemanticityAutoEncoder":
-        dictionary = TowardsMonosemanticityAutoEncoder.from_pretrained(ae_path, device=device)
+    elif dict_class == "ReLUAutoEncoderTowardsMonosemanticity":
+        dictionary = ReLUAutoEncoderTowardsMonosemanticity.from_pretrained(ae_path, device=device)
     elif dict_class == "TopKAutoEncoder":
         k = config["trainer"]["k"]
         dictionary = TopKAutoEncoder.from_pretrained(ae_path, k=k, device=device)

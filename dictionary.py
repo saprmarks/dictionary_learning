@@ -96,7 +96,7 @@ class ReLUAutoEncoder(Dictionary, nn.Module):
         return autoencoder
     
 
-class TowardsMonosemanticityAutoEncoder(Dictionary, nn.Module):
+class ReLUAutoEncoderTowardsMonosemanticity(Dictionary, nn.Module):
     """
     Standard ReLU SAE as defined in Towards Monosemanticity: https://transformer-circuits.pub/2024/towards-monosemanticity/index.html
     This is a legacy implementation, we recommend using ReLUAutoEncoder by default.
