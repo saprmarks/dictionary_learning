@@ -236,26 +236,26 @@ class BatchTopKTrainer(SAETrainer):
             median = median.to(self.ae.b_dec.dtype)
             self.ae.b_dec.data = median
 
-        # Make sure the decoder is still unit-norm
-        self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
-            self.ae.decoder.weight, self.ae.activation_dim, self.ae.dict_size
-        )
-
         x = x.to(self.device)
         loss = self.loss(x, step=step)
         loss.backward()
 
-        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
         self.ae.decoder.weight.grad = remove_gradient_parallel_to_decoder_directions(
             self.ae.decoder.weight,
             self.ae.decoder.weight.grad,
             self.ae.activation_dim,
             self.ae.dict_size,
         )
+        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
 
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.scheduler.step()
+
+        # Make sure the decoder is still unit-norm
+        self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
+            self.ae.decoder.weight, self.ae.activation_dim, self.ae.dict_size
+        )
 
         return loss.item()
 

@@ -175,9 +175,9 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         if group_weights is None:
             group_weights = [(1.0 / len(group_sizes))] * len(group_sizes)
 
-        assert len(group_sizes) == len(
-            group_weights
-        ), "group_sizes and group_weights must have the same length"
+        assert len(group_sizes) == len(group_weights), (
+            "group_sizes and group_weights must have the same length"
+        )
 
         self.group_fractions = group_fractions
         self.group_sizes = group_sizes
@@ -236,7 +236,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         # l0 = (f != 0).float().sum(dim=-1).mean().item()
 
         if step > self.threshold_start_step:
-            device_type = 'cuda' if x.is_cuda else 'cpu'
+            device_type = "cuda" if x.is_cuda else "cpu"
             with t.autocast(device_type=device_type, enabled=False), t.no_grad():
                 active = f[f > 0]
 
@@ -305,24 +305,24 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
             median = self.geometric_median(x)
             self.ae.b_dec.data = median
 
-        # We must transpose because we are using nn.Parameter, not nn.Linear
-        self.ae.W_dec.data = set_decoder_norm_to_unit_norm(
-            self.ae.W_dec.T, self.ae.activation_dim, self.ae.dict_size
-        ).T
-
         x = x.to(self.device)
         loss = self.loss(x, step=step)
         loss.backward()
 
-        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
         # We must transpose because we are using nn.Parameter, not nn.Linear
         self.ae.W_dec.grad = remove_gradient_parallel_to_decoder_directions(
             self.ae.W_dec.T, self.ae.W_dec.grad.T, self.ae.activation_dim, self.ae.dict_size
         ).T
+        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
 
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.scheduler.step()
+
+        # We must transpose because we are using nn.Parameter, not nn.Linear
+        self.ae.W_dec.data = set_decoder_norm_to_unit_norm(
+            self.ae.W_dec.T, self.ae.activation_dim, self.ae.dict_size
+        ).T
 
         return loss.item()
 
