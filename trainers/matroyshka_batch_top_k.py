@@ -74,18 +74,17 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
             flattened_acts = post_relu_feat_acts_BF.flatten()
             post_topk = flattened_acts.topk(self.k * x.size(0), sorted=False, dim=-1)
 
-            buffer_BF = t.zeros_like(post_relu_feat_acts_BF)
             encoded_acts_BF = (
-                buffer_BF.flatten()
-                .scatter(-1, post_topk.indices, post_topk.values)
-                .reshape(buffer_BF.shape)
+                t.zeros_like(post_relu_feat_acts_BF.flatten())
+                .scatter_(-1, post_topk.indices, post_topk.values)
+                .reshape(post_relu_feat_acts_BF.shape)
             )
 
         max_act_index = self.group_indices[self.active_groups]
         encoded_acts_BF[:, max_act_index:] = 0
 
         if return_active:
-            return encoded_acts_BF, encoded_acts_BF.sum(0) > 0
+            return encoded_acts_BF, encoded_acts_BF.sum(0) > 0, post_relu_feat_acts_BF
         else:
             return encoded_acts_BF
 
@@ -207,50 +206,69 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
 
         self.num_tokens_since_fired = t.zeros(dict_size, dtype=t.long, device=device)
-        self.logging_parameters = ["effective_l0", "dead_features"]
+        self.logging_parameters = ["effective_l0", "dead_features", "pre_norm_auxk_loss"]
         self.effective_l0 = -1
         self.dead_features = -1
+        self.pre_norm_auxk_loss = -1
 
-    def get_auxiliary_loss(self, x, x_reconstruct, acts):
+    def get_auxiliary_loss(self, residual_BD: t.Tensor, post_relu_acts_BF: t.Tensor):
         dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
         self.dead_features = int(dead_features.sum())
-        if dead_features.sum() > 0:
-            residual = x.float() - x_reconstruct.float()
-            acts_topk_aux = t.topk(
-                acts[:, dead_features],
-                min(self.top_k_aux, dead_features.sum()),
-                dim=-1,
-            )
-            acts_aux = t.zeros_like(acts[:, dead_features]).scatter(
-                -1, acts_topk_aux.indices, acts_topk_aux.values
-            )
-            x_reconstruct_aux = F.linear(acts_aux, self.ae.W_dec[dead_features, :].T)
-            l2_loss_aux = (x_reconstruct_aux.float() - residual.float()).pow(2).mean()
 
-            return l2_loss_aux
+        if self.dead_features > 0:
+            k_aux = min(self.top_k_aux, self.dead_features)
+
+            auxk_latents = t.where(dead_features[None], post_relu_acts_BF, -t.inf)
+
+            # Top-k dead latents
+            auxk_acts, auxk_indices = auxk_latents.topk(k_aux, sorted=False)
+
+            auxk_buffer_BF = t.zeros_like(post_relu_acts_BF)
+            auxk_acts_BF = auxk_buffer_BF.scatter_(dim=-1, index=auxk_indices, src=auxk_acts)
+
+            # We don't want to apply the bias
+            x_reconstruct_aux = auxk_acts_BF @ self.ae.W_dec
+            l2_loss_aux = (
+                (residual_BD.float() - x_reconstruct_aux.float()).pow(2).sum(dim=-1).mean()
+            )
+
+            self.pre_norm_auxk_loss = l2_loss_aux
+
+            # normalization from OpenAI implementation: https://github.com/openai/sparse_autoencoder/blob/main/sparse_autoencoder/kernels.py#L614
+            residual_mu = residual_BD.mean(dim=0)[None, :].broadcast_to(residual_BD.shape)
+            loss_denom = (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
+            normalized_auxk_loss = l2_loss_aux / loss_denom
+
+            return normalized_auxk_loss
         else:
-            return t.tensor(0, dtype=x.dtype, device=x.device)
+            self.pre_norm_auxk_loss = -1
+            return t.tensor(0, dtype=residual_BD.dtype, device=residual_BD.device)
+
+    def update_threshold(self, f: t.Tensor):
+        device_type = "cuda" if f.is_cuda else "cpu"
+        with t.autocast(device_type=device_type, enabled=False), t.no_grad():
+            active = f[f > 0]
+
+            if active.size(0) == 0:
+                min_activation = 0.0
+            else:
+                min_activation = active.min().detach().to(dtype=t.float32)
+
+            if self.ae.threshold < 0:
+                self.ae.threshold = min_activation
+            else:
+                self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
+                    (1 - self.threshold_beta) * min_activation
+                )
 
     def loss(self, x, step=None, logging=False):
-        f, active_indices = self.ae.encode(x, return_active=True, use_threshold=False)
+        f, active_indices_F, post_relu_acts_BF = self.ae.encode(
+            x, return_active=True, use_threshold=False
+        )
         # l0 = (f != 0).float().sum(dim=-1).mean().item()
 
         if step > self.threshold_start_step:
-            device_type = "cuda" if x.is_cuda else "cpu"
-            with t.autocast(device_type=device_type, enabled=False), t.no_grad():
-                active = f[f > 0]
-
-                if active.size(0) == 0:
-                    min_activation = 0.0
-                else:
-                    min_activation = active.min().detach().to(dtype=t.float32)
-
-                if self.ae.threshold < 0:
-                    self.ae.threshold = min_activation
-                else:
-                    self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
-                        (1 - self.threshold_beta) * min_activation
-                    )
+            self.update_threshold(f)
 
         x_reconstruct = t.zeros_like(x) + self.ae.b_dec
         total_l2_loss = 0.0
@@ -263,7 +281,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
             acts_slice = f[:, group_start:group_end]
             x_reconstruct = x_reconstruct + acts_slice @ W_dec_slice
 
-            l2_loss = (x_reconstruct - x).pow(2).sum(dim=-1).mean() * self.group_weights[i]
+            l2_loss = (x - x_reconstruct).pow(2).sum(dim=-1).mean() * self.group_weights[i]
             total_l2_loss += l2_loss
             l2_losses = t.cat([l2_losses, l2_loss.unsqueeze(0)])
 
@@ -275,13 +293,11 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
 
         num_tokens_in_step = x.size(0)
         did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
-        did_fire[active_indices] = True
+        did_fire[active_indices_F] = True
         self.num_tokens_since_fired += num_tokens_in_step
         self.num_tokens_since_fired[did_fire] = 0
 
-        auxk_loss = self.get_auxiliary_loss(x, x_reconstruct, f)
-
-        auxk_loss = auxk_loss.sum(dim=-1).mean()
+        auxk_loss = self.get_auxiliary_loss((x - x_reconstruct), post_relu_acts_BF)
         loss = mean_l2_loss + self.auxk_alpha * auxk_loss
 
         if not logging:
