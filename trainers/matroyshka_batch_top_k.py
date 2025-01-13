@@ -239,7 +239,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
             loss_denom = (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
             normalized_auxk_loss = l2_loss_aux / loss_denom
 
-            return normalized_auxk_loss
+            return normalized_auxk_loss.nan_to_num(0.0)
         else:
             self.pre_norm_auxk_loss = -1
             return t.tensor(0, dtype=residual_BD.dtype, device=residual_BD.device)
@@ -297,7 +297,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         self.num_tokens_since_fired += num_tokens_in_step
         self.num_tokens_since_fired[did_fire] = 0
 
-        auxk_loss = self.get_auxiliary_loss((x - x_reconstruct), post_relu_acts_BF)
+        auxk_loss = self.get_auxiliary_loss((x - x_reconstruct).detach(), post_relu_acts_BF)
         loss = mean_l2_loss + self.auxk_alpha * auxk_loss
 
         if not logging:

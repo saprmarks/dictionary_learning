@@ -244,7 +244,7 @@ class TopKTrainer(SAETrainer):
             loss_denom = (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
             normalized_auxk_loss = l2_loss_aux / loss_denom
 
-            return normalized_auxk_loss
+            return normalized_auxk_loss.nan_to_num(0.0)
         else:
             self.pre_norm_auxk_loss = -1
             return t.tensor(0, dtype=residual_BD.dtype, device=residual_BD.device)
@@ -293,7 +293,9 @@ class TopKTrainer(SAETrainer):
         self.num_tokens_since_fired[did_fire] = 0
 
         l2_loss = e.pow(2).sum(dim=-1).mean()
-        auxk_loss = self.get_auxiliary_loss(e, post_relu_acts_BF) if self.auxk_alpha > 0 else 0
+        auxk_loss = (
+            self.get_auxiliary_loss(e.detach(), post_relu_acts_BF) if self.auxk_alpha > 0 else 0
+        )
 
         loss = l2_loss + self.auxk_alpha * auxk_loss
 
