@@ -188,24 +188,25 @@ class JumpReluTrainer(nn.Module, SAETrainer):
             )
 
     def update(self, step, x):
+        x = x.to(self.device)
+        loss = self.loss(x, step=step)
+        loss.backward()
+
+        # We must transpose because we are using nn.Parameter, not nn.Linear
+        self.ae.W_dec.grad = remove_gradient_parallel_to_decoder_directions(
+            self.ae.W_dec.T, self.ae.W_dec.grad.T, self.ae.activation_dim, self.ae.dict_size
+        ).T
+        torch.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
+
+        self.optimizer.step()
+        self.scheduler.step()
+        self.optimizer.zero_grad()
+
         # We must transpose because we are using nn.Parameter, not nn.Linear
         self.ae.W_dec.data = set_decoder_norm_to_unit_norm(
             self.ae.W_dec.T, self.ae.activation_dim, self.ae.dict_size
         ).T
 
-        x = x.to(self.device)
-        loss = self.loss(x, step=step)
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
-        # We must transpose because we are using nn.Parameter, not nn.Linear
-        self.ae.W_dec.grad = remove_gradient_parallel_to_decoder_directions(
-            self.ae.W_dec.T, self.ae.W_dec.grad.T, self.ae.activation_dim, self.ae.dict_size
-        ).T
-
-        self.optimizer.step()
-        self.scheduler.step()
-        self.optimizer.zero_grad()
         return loss.item()
 
     @property

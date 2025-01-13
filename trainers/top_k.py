@@ -87,7 +87,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
             encoded_acts_BF = post_relu_feat_acts_BF * (post_relu_feat_acts_BF > self.threshold)
             if return_topk:
                 post_topk = post_relu_feat_acts_BF.topk(self.k, sorted=False, dim=-1)
-                return encoded_acts_BF, post_topk.values, post_topk.indices
+                return encoded_acts_BF, post_topk.values, post_topk.indices, post_relu_feat_acts_BF
             else:
                 return encoded_acts_BF
 
@@ -101,7 +101,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         encoded_acts_BF = buffer_BF.scatter_(dim=-1, index=top_indices_BK, src=tops_acts_BK)
 
         if return_topk:
-            return encoded_acts_BF, tops_acts_BK, top_indices_BK
+            return encoded_acts_BF, tops_acts_BK, top_indices_BK, post_relu_feat_acts_BF
         else:
             return encoded_acts_BF
 
@@ -199,8 +199,15 @@ class TopKTrainer(SAETrainer):
             # Auto-select LR using 1 / sqrt(d) scaling law from Figure 3 of the paper
             scale = dict_size / (2**14)
             self.lr = 2e-4 / scale**0.5
+
         self.auxk_alpha = auxk_alpha
         self.dead_feature_threshold = 10_000_000
+        self.top_k_aux = activation_dim // 2  # Heuristic from B.1 of the paper
+        self.num_tokens_since_fired = t.zeros(dict_size, dtype=t.long, device=device)
+        self.logging_parameters = ["effective_l0", "dead_features", "pre_norm_auxk_loss"]
+        self.effective_l0 = -1
+        self.dead_features = -1
+        self.pre_norm_auxk_loss = -1
 
         # Optimizer and scheduler
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
@@ -209,90 +216,85 @@ class TopKTrainer(SAETrainer):
 
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
 
-        # Training parameters
-        self.num_tokens_since_fired = t.zeros(dict_size, dtype=t.long, device=device)
+    def get_auxiliary_loss(self, residual_BD: t.Tensor, post_relu_acts_BF: t.Tensor):
+        dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
+        self.dead_features = int(dead_features.sum())
 
-        # Log the effective L0, i.e. number of features actually used, which should a constant value (K)
-        # Note: The standard L0 is essentially a measure of dead features for Top-K SAEs)
-        self.logging_parameters = ["effective_l0", "dead_features"]
-        self.effective_l0 = -1
-        self.dead_features = -1
+        if self.dead_features > 0:
+            k_aux = min(self.top_k_aux, self.dead_features)
 
-    def loss(self, x, step=None, logging=False):
-        # Run the SAE
-        f, top_acts, top_indices = self.ae.encode(x, return_topk=True, use_threshold=False)
-
-        if step > self.threshold_start_step:
-            device_type = 'cuda' if x.is_cuda else 'cpu'
-            with t.autocast(device_type=device_type, enabled=False), t.no_grad():
-                active = top_acts.clone().detach()
-                active[active <= 0] = float("inf")
-                min_activations = active.min(dim=1).values.to(dtype=t.float32)
-                min_activation = min_activations.mean()
-
-                B, K = active.shape
-                assert len(active.shape) == 2
-                assert min_activations.shape == (B,)
-
-                if self.ae.threshold < 0:
-                    self.ae.threshold = min_activation
-                else:
-                    self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
-                        (1 - self.threshold_beta) * min_activation
-                    )
-
-        x_hat = self.ae.decode(f)
-
-        # Measure goodness of reconstruction
-        e = x_hat - x
-        total_variance = (x - x.mean(0)).pow(2).sum(0)
-
-        # Update the effective L0 (again, should just be K)
-        self.effective_l0 = top_acts.size(1)
-
-        # Update "number of tokens since fired" for each features
-        num_tokens_in_step = x.size(0)
-        did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
-        did_fire[top_indices.flatten()] = True
-        self.num_tokens_since_fired += num_tokens_in_step
-        self.num_tokens_since_fired[did_fire] = 0
-
-        # Compute dead feature mask based on "number of tokens since fired"
-        dead_mask = (
-            self.num_tokens_since_fired > self.dead_feature_threshold
-            if self.auxk_alpha > 0
-            else None
-        ).to(f.device)
-        self.dead_features = int(dead_mask.sum())
-
-        # If dead features: Second decoder pass for AuxK loss
-        if dead_mask is not None and (num_dead := int(dead_mask.sum())) > 0:
-            # Heuristic from Appendix B.1 in the paper
-            k_aux = x.shape[-1] // 2
-
-            # Reduce the scale of the loss if there are a small number of dead latents
-            scale = min(num_dead / k_aux, 1.0)
-            k_aux = min(k_aux, num_dead)
-
-            # Don't include living latents in this loss
-            auxk_latents = t.where(dead_mask[None], f, -t.inf)
+            auxk_latents = t.where(dead_features[None], post_relu_acts_BF, -t.inf)
 
             # Top-k dead latents
             auxk_acts, auxk_indices = auxk_latents.topk(k_aux, sorted=False)
 
-            auxk_buffer_BF = t.zeros_like(f)
+            auxk_buffer_BF = t.zeros_like(post_relu_acts_BF)
             auxk_acts_BF = auxk_buffer_BF.scatter_(dim=-1, index=auxk_indices, src=auxk_acts)
 
-            # Encourage the top ~50% of dead latents to predict the residual of the
-            # top k living latents
-            e_hat = self.ae.decode(auxk_acts_BF)
-            auxk_loss = (e_hat - e).pow(2)  # .sum(0)
-            auxk_loss = scale * t.mean(auxk_loss / total_variance)
+            # Note: decoder(), not decode(), as we don't want to apply the bias
+            x_reconstruct_aux = self.ae.decoder(auxk_acts_BF)
+            l2_loss_aux = (
+                (residual_BD.float() - x_reconstruct_aux.float()).pow(2).sum(dim=-1).mean()
+            )
+
+            self.pre_norm_auxk_loss = l2_loss_aux
+
+            # normalization from OpenAI implementation: https://github.com/openai/sparse_autoencoder/blob/main/sparse_autoencoder/kernels.py#L614
+            residual_mu = residual_BD.mean(dim=0)[None, :].broadcast_to(residual_BD.shape)
+            loss_denom = (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
+            normalized_auxk_loss = l2_loss_aux / loss_denom
+
+            return normalized_auxk_loss
         else:
-            auxk_loss = x_hat.new_tensor(0.0)
+            self.pre_norm_auxk_loss = -1
+            return t.tensor(0, dtype=residual_BD.dtype, device=residual_BD.device)
+
+    def update_threshold(self, top_acts_BK: t.Tensor):
+        device_type = "cuda" if top_acts_BK.is_cuda else "cpu"
+        with t.autocast(device_type=device_type, enabled=False), t.no_grad():
+            active = top_acts_BK.clone().detach()
+            active[active <= 0] = float("inf")
+            min_activations = active.min(dim=1).values.to(dtype=t.float32)
+            min_activation = min_activations.mean()
+
+            B, K = active.shape
+            assert len(active.shape) == 2
+            assert min_activations.shape == (B,)
+
+            if self.ae.threshold < 0:
+                self.ae.threshold = min_activation
+            else:
+                self.ae.threshold = (self.threshold_beta * self.ae.threshold) + (
+                    (1 - self.threshold_beta) * min_activation
+                )
+
+    def loss(self, x, step=None, logging=False):
+        # Run the SAE
+        f, top_acts_BK, top_indices_BK, post_relu_acts_BF = self.ae.encode(
+            x, return_topk=True, use_threshold=False
+        )
+
+        if step > self.threshold_start_step:
+            self.update_threshold(top_acts_BK)
+
+        x_hat = self.ae.decode(f)
+
+        # Measure goodness of reconstruction
+        e = x - x_hat
+
+        # Update the effective L0 (again, should just be K)
+        self.effective_l0 = top_acts_BK.size(1)
+
+        # Update "number of tokens since fired" for each features
+        num_tokens_in_step = x.size(0)
+        did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
+        did_fire[top_indices_BK.flatten()] = True
+        self.num_tokens_since_fired += num_tokens_in_step
+        self.num_tokens_since_fired[did_fire] = 0
 
         l2_loss = e.pow(2).sum(dim=-1).mean()
-        auxk_loss = auxk_loss.sum(dim=-1).mean()
+        auxk_loss = self.get_auxiliary_loss(e, post_relu_acts_BF) if self.auxk_alpha > 0 else 0
+
         loss = l2_loss + self.auxk_alpha * auxk_loss
 
         if not logging:
@@ -312,29 +314,30 @@ class TopKTrainer(SAETrainer):
             median = median.to(self.ae.b_dec.dtype)
             self.ae.b_dec.data = median
 
-        # Make sure the decoder is still unit-norm
-        self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
-            self.ae.decoder.weight, self.ae.activation_dim, self.ae.dict_size
-        )
-
         # compute the loss
         x = x.to(self.device)
         loss = self.loss(x, step=step)
         loss.backward()
 
         # clip grad norm and remove grads parallel to decoder directions
-        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
         self.ae.decoder.weight.grad = remove_gradient_parallel_to_decoder_directions(
             self.ae.decoder.weight,
             self.ae.decoder.weight.grad,
             self.ae.activation_dim,
             self.ae.dict_size,
         )
+        t.nn.utils.clip_grad_norm_(self.ae.parameters(), 1.0)
 
         # do a training step
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.scheduler.step()
+
+        # Make sure the decoder is still unit-norm
+        self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
+            self.ae.decoder.weight, self.ae.activation_dim, self.ae.dict_size
+        )
+
         return loss.item()
 
     @property
