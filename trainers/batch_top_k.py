@@ -146,10 +146,10 @@ class BatchTopKTrainer(SAETrainer):
         self.dead_feature_threshold = 10_000_000
         self.top_k_aux = activation_dim // 2  # Heuristic from B.1 of the paper
         self.num_tokens_since_fired = t.zeros(dict_size, dtype=t.long, device=device)
-        self.logging_parameters = ["effective_l0", "dead_features", "pre_norm_aux_loss"]
+        self.logging_parameters = ["effective_l0", "dead_features", "pre_norm_auxk_loss"]
         self.effective_l0 = -1
         self.dead_features = -1
-        self.pre_norm_aux_loss = -1
+        self.pre_norm_auxk_loss = -1
 
         self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
 
