@@ -34,7 +34,7 @@ def apply_temperature(probabilities: list[float], temperature: float) -> list[fl
     return scaled_probs.tolist()
 
 
-class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
+class MatryoshkaBatchTopKSAE(Dictionary, nn.Module):
     def __init__(self, activation_dim: int, dict_size: int, k: int, group_sizes: list[int]):
         super().__init__()
         self.activation_dim = activation_dim
@@ -108,7 +108,7 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
             self.threshold *= scale
 
     @classmethod
-    def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "MatroyshkaBatchTopKSAE":
+    def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "MatryoshkaBatchTopKSAE":
         state_dict = t.load(path)
         activation_dim, dict_size = state_dict["W_enc"].shape
         if k is None:
@@ -125,7 +125,7 @@ class MatroyshkaBatchTopKSAE(Dictionary, nn.Module):
         return autoencoder
 
 
-class MatroyshkaBatchTopKTrainer(SAETrainer):
+class MatryoshkaBatchTopKTrainer(SAETrainer):
     def __init__(
         self,
         steps: int,  # total number of steps to train for
@@ -136,7 +136,7 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
         lm_name: str,
         group_fractions: list[float],
         group_weights: Optional[list[float]] = None,
-        dict_class: type = MatroyshkaBatchTopKSAE,
+        dict_class: type = MatryoshkaBatchTopKSAE,
         lr: Optional[float] = None,
         auxk_alpha: float = 1 / 32,
         warmup_steps: int = 1000,
@@ -345,8 +345,8 @@ class MatroyshkaBatchTopKTrainer(SAETrainer):
     @property
     def config(self):
         return {
-            "trainer_class": "MatroyshkaBatchTopKTrainer",
-            "dict_class": "MatroyshkaBatchTopKSAE",
+            "trainer_class": "MatryoshkaBatchTopKTrainer",
+            "dict_class": "MatryoshkaBatchTopKSAE",
             "lr": self.lr,
             "steps": self.steps,
             "auxk_alpha": self.auxk_alpha,
