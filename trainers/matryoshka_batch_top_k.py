@@ -274,7 +274,6 @@ class MatryoshkaBatchTopKTrainer(SAETrainer):
         total_l2_loss = 0.0
         l2_losses = t.tensor([]).to(self.device)
 
-        intermediates = []
         # We could potentially refactor the ae class to use W_dec_chunks instead of W_dec, may be more efficient
         W_dec_chunks = t.split(self.ae.W_dec, self.ae.group_sizes.tolist(), dim=0)
         f_chunks = t.split(f, self.ae.group_sizes.tolist(), dim=1)
@@ -282,14 +281,9 @@ class MatryoshkaBatchTopKTrainer(SAETrainer):
         for i in range(self.ae.active_groups):
             W_dec_slice = W_dec_chunks[i]
             acts_slice = f_chunks[i]
-
             x_reconstruct = x_reconstruct + acts_slice @ W_dec_slice
-            intermediates.append(x_reconstruct)
 
-        for intermediate_reconstruct in intermediates:
-            l2_loss = (x - intermediate_reconstruct).pow(2).sum(dim=-1).mean() * self.group_weights[
-                i
-            ]
+            l2_loss = (x - x_reconstruct).pow(2).sum(dim=-1).mean() * self.group_weights[i]
             total_l2_loss += l2_loss
             l2_losses = t.cat([l2_losses, l2_loss.unsqueeze(0)])
 
