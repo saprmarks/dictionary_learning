@@ -7,7 +7,11 @@ import random
 from dictionary_learning.training import trainSAE
 from dictionary_learning.trainers.standard import StandardTrainer
 from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
-from dictionary_learning.utils import hf_dataset_to_generator, get_nested_folders, load_dictionary
+from dictionary_learning.utils import (
+    hf_dataset_to_generator,
+    get_nested_folders,
+    load_dictionary,
+)
 from dictionary_learning.buffer import ActivationBuffer
 from dictionary_learning.dictionary import (
     AutoEncoder,
@@ -62,10 +66,8 @@ def test_sae_training():
     """End to end test for training an SAE. Takes ~2 minutes on an RTX 3090.
     This isn't a nice suite of unit tests, but it's better than nothing.
     I have observed that results can slightly vary with library versions. For full determinism,
-    use pytorch 2.5.1 and nnsight 0.3.7.
+    use pytorch 2.5.1 and nnsight 0.3.7."""
 
-    NOTE: `dictionary_learning` is meant to be used as a submodule. Thus, to run this test, you need to use `dictionary_learning` as a submodule
-    and run the test from the root of the repository using `pytest -s`. Refer to https://github.com/adamkarvonen/dictionary_learning_demo for an example"""
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
 
