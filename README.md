@@ -71,6 +71,7 @@ An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a
 
 Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
 ```python
+
 from nnsight import LanguageModel
 from dictionary_learning import ActivationBuffer, AutoEncoder
 from dictionary_learning.trainers import StandardTrainer
@@ -83,38 +84,42 @@ model = LanguageModel(
     model_name,
     device_map=device,
 )
+
 submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
 activation_dim = 512 # output dimension of the MLP
 dictionary_size = 16 * activation_dim
 
+from datasets import load_dataset
+ds = load_dataset("Salesforce/wikitext", "wikitext-103-v1")
 # data must be an iterator that outputs strings
-data = iter(
-    [
-        "This is some example data",
-        "In real life, for training a dictionary",
-        "you would need much more data than this",
-    ]
-)
+data = iter(ds['train']['text'])
+
 buffer = ActivationBuffer(
     data=data,
     model=model,
     submodule=submodule,
     d_submodule=activation_dim, # output dimension of the model component
-    n_ctxs=3e4,  # you can set this higher or lower dependong on your available memory
+    n_ctxs=3000,  # you can set this higher or lower dependong on your available memory
     device=device,
 )  # buffer will yield batches of tensors of dimension = submodule's output dimension
 
+steps = 10000
+
 trainer_cfg = {
     "trainer": StandardTrainer,
+    "steps":steps,
+    "lm_name": model_name,
     "dict_class": AutoEncoder,
     "activation_dim": activation_dim,
     "dict_size": dictionary_size,
+    "layer": 1,
     "lr": 1e-3,
     "device": device,
 }
 
 # train the sparse autoencoder (SAE)
 ae = trainSAE(
+    steps=steps,
     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
     trainer_configs=[trainer_cfg],
 )
