@@ -28,6 +28,7 @@ class ActivationBuffer:
                  out_batch_size=8192, # size of batches in which to yield activations
                  device='cpu', # device on which to store the activations
                  remove_bos: bool = False,
+                add_special_tokens: bool = True,
                  ):
         
         if io not in ['in', 'out']:
@@ -56,7 +57,8 @@ class ActivationBuffer:
         self.out_batch_size = out_batch_size
         self.device = device
         self.remove_bos = remove_bos
-    
+        self.add_special_tokens = add_special_tokens
+
     def __iter__(self):
         return self
 
@@ -98,7 +100,8 @@ class ActivationBuffer:
             return_tensors='pt',
             max_length=self.ctx_len,
             padding=True,
-            truncation=True
+            truncation=True,
+            add_special_tokens=self.add_special_tokens
         )
 
     def refresh(self):
@@ -117,8 +120,9 @@ class ActivationBuffer:
 
         while current_idx < self.activation_buffer_size:
             with t.no_grad():
+                tokens = self.tokenized_batch()
                 with self.model.trace(
-                    self.text_batch(),
+                    tokens,
                     **tracer_kwargs,
                     invoker_args={"truncation": True, "max_length": self.ctx_len},
                 ):
