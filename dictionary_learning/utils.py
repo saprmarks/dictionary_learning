@@ -47,6 +47,195 @@ def zst_to_generator(data_path):
     return generator()
 
 
+def randomly_remove_system_prompt(
+    text: str, freq: float, system_prompt: str | None = None
+) -> str:
+    if system_prompt and random.random() < freq:
+        assert system_prompt in text
+        text = text.replace(system_prompt, "")
+    return text
+
+
+def hf_mixed_dataset_to_generator(
+    tokenizer: AutoTokenizer,
+    pretrain_dataset: str = "HuggingFaceFW/fineweb",
+    chat_dataset: str = "lmsys/lmsys-chat-1m",
+    min_chars: int = 1,
+    pretrain_frac: float = 0.9,  # 0.9 → 90 % pretrain, 10 % chat
+    split: str = "train",
+    streaming: bool = True,
+    pretrain_key: str = "text",
+    chat_key: str = "conversation",
+    sequence_pack_pretrain: bool = True,
+    sequence_pack_chat: bool = False,
+    system_prompt_to_remove: str | None = None,
+    system_prompt_removal_freq: float = 0.9,
+):
+    """Get a mix of pretrain and chat data at a specified ratio. By default, 90% of the data will be pretrain and 10% will be chat.
+
+    Default datasets:
+    pretrain_dataset: "HuggingFaceFW/fineweb"
+    chat_dataset: "lmsys/lmsys-chat-1m"
+
+    Note that you will have to request permission for lmsys (instant approval on HuggingFace).
+
+    min_chars: minimum number of characters per sample. To perform sequence packing, set it to ~4x sequence length in tokens.
+    Samples will be joined with the eos token.
+    If it's low (like 1), each sample will just be a single row from the dataset, padded to the max length. Sometimes this will fill the context, sometimes it won't.
+
+    Why use strings instead of tokens? Because dictionary learning expects an iterator of strings, and this is simple and good enough.
+
+    Implicit assumption: each sample will be truncated to sequence length when tokenized.
+
+    By default, we sequence pack the pretrain data and DO NOT sequence pack the chat data, as it would look kind of weird. The EOS token is used to separate
+    user / assistant messages, not to separate conversations from different users.
+    If you want to sequence pack the chat data, set sequence_pack_chat to True.
+
+    Pretrain format will be: <bos>text<eos>text<eos>text<eos>...
+    Chat format will be <formatted chat message> Optionally: <formatted chat message><formatted chat message>...
+
+    Other parameters:
+    - system_prompt_to_remove: an optional string that will be removed from the chat data with a given frequency.
+        You probably want to verify that the system prompt you pass in is correct.
+    - system_prompt_removal_freq: the frequency with which the system prompt will be removed
+
+    Why? Well, we probably don't want to have 1000's of copies of the system prompt in the training dataset. But we also may not want to remove it entirely.
+    And we may want to use the LLM with no system prompt when comparing between models.
+    IDK, this is a complicated and annoying detail. At least this constrains the complexity to the dataset generator.
+    """
+    if not 0 < pretrain_frac < 1:
+        raise ValueError("main_frac must be between 0 and 1 (exclusive)")
+
+    assert min_chars > 0
+
+    # Load both datasets as iterable streams
+    pretrain_ds = iter(load_dataset(pretrain_dataset, split=split, streaming=streaming))
+    chat_ds = iter(load_dataset(chat_dataset, split=split, streaming=streaming))
+
+    # Convert the fraction to two small integers (e.g. 0.9 → 9 / 10)
+    frac = Fraction(pretrain_frac).limit_denominator()
+    n_pretrain = frac.numerator
+    n_chat = frac.denominator - n_pretrain
+    eos_token = tokenizer.eos_token
+
+    bos_token = tokenizer.bos_token if tokenizer.bos_token else eos_token
+
+    def gen():
+        while True:
+            for _ in range(n_pretrain):
+                if sequence_pack_pretrain:
+                    length = 0
+                    samples = []
+                    while length < min_chars:
+                        # Add bos token to the beginning of the sample
+                        sample = next(pretrain_ds)[pretrain_key]
+                        samples.append(sample)
+                        length += len(sample)
+                    samples = bos_token + eos_token.join(samples)
+                    yield samples
+                else:
+                    sample = bos_token + next(pretrain_ds)[pretrain_key]
+                    yield sample
+            for _ in range(n_chat):
+                if sequence_pack_chat:
+                    length = 0
+                    samples = []
+                    while length < min_chars:
+                        sample = next(chat_ds)[chat_key]
+                        # Apply chat template also includes bos token
+                        sample = tokenizer.apply_chat_template(sample, tokenize=False)
+                        sample = randomly_remove_system_prompt(
+                            sample, system_prompt_removal_freq, system_prompt_to_remove
+                        )
+                        samples.append(sample)
+                        length += len(sample)
+                    samples = "".join(samples)
+                    yield samples
+                else:
+                    sample = tokenizer.apply_chat_template(
+                        next(chat_ds)[chat_key], tokenize=False
+                    )
+                    sample = randomly_remove_system_prompt(
+                        sample, system_prompt_removal_freq, system_prompt_to_remove
+                    )
+                    yield sample
+
+    return gen()
+
+
+def hf_sequence_packing_dataset_to_generator(
+    tokenizer: AutoTokenizer,
+    pretrain_dataset: str = "HuggingFaceFW/fineweb",
+    min_chars: int = 1,
+    split: str = "train",
+    streaming: bool = True,
+    pretrain_key: str = "text",
+    sequence_pack_pretrain: bool = True,
+):
+    """min_chars: minimum number of characters per sample. To perform sequence packing, set it to ~4x sequence length in tokens.
+    Samples will be joined with the eos token.
+    If it's low (like 1), each sample will just be a single row from the dataset, padded to the max length. Sometimes this will fill the context, sometimes it won't."""
+    assert min_chars > 0
+
+    # Load both datasets as iterable streams
+    pretrain_ds = iter(load_dataset(pretrain_dataset, split=split, streaming=streaming))
+
+    eos_token = tokenizer.eos_token
+
+    bos_token = tokenizer.bos_token if tokenizer.bos_token else eos_token
+
+    def gen():
+        while True:
+            if sequence_pack_pretrain:
+                length = 0
+                samples = []
+                while length < min_chars:
+                    # Add bos token to the beginning of the sample
+                    sample = next(pretrain_ds)[pretrain_key]
+                    samples.append(sample)
+                    length += len(sample)
+                samples = bos_token + eos_token.join(samples)
+                yield samples
+            else:
+                sample = bos_token + next(pretrain_ds)[pretrain_key]
+                yield sample
+
+    return gen()
+
+
+def simple_hf_mixed_dataset_to_generator(
+    main_name: str,
+    aux_name: str,
+    main_frac: float = 0.9,  # 0.9 → 90 % main, 10 % aux
+    split: str = "train",
+    streaming: bool = True,
+    main_key: str = "text",
+    aux_key: str = "text",
+):
+    if not 0 < main_frac < 1:
+        raise ValueError("main_frac must be between 0 and 1 (exclusive)")
+
+    # Load both datasets as iterable streams
+    main_ds = iter(load_dataset(main_name, split=split, streaming=streaming))
+    aux_ds = iter(load_dataset(aux_name, split=split, streaming=streaming))
+
+    # Convert the fraction to two small integers (e.g. 0.9 → 9 / 10)
+    frac = Fraction(main_frac).limit_denominator()
+    n_main = frac.numerator
+    n_aux = frac.denominator - n_main
+
+    def gen():
+        while True:
+            # Yield `n_main` items from the main dataset
+            for _ in range(n_main):
+                yield next(main_ds)[main_key]
+            # Yield `n_aux` items from the auxiliary dataset
+            for _ in range(n_aux):
+                yield next(aux_ds)[aux_key]
+
+    return gen()
+
+
 def get_nested_folders(path: str) -> list[str]:
     """
     Recursively get a list of folders that contain an ae.pt file, starting the search from the given path
