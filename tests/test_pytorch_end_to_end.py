@@ -1,5 +1,5 @@
 import torch as t
-from nnsight import LanguageModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import os
 import json
 import random
@@ -12,7 +12,9 @@ from dictionary_learning.utils import (
     get_nested_folders,
     load_dictionary,
 )
-from dictionary_learning.buffer import ActivationBuffer
+
+# from dictionary_learning.buffer import ActivationBuffer
+from dictionary_learning.pytorch_buffer import ActivationBuffer
 from dictionary_learning.dictionary import (
     AutoEncoder,
     GatedAutoEncoder,
@@ -23,32 +25,24 @@ from dictionary_learning.evaluation import evaluate
 
 EXPECTED_RESULTS = {
     "AutoEncoderTopK": {
-        "l2_loss": 4.362327718734742,
-        "l1_loss": 50.94957427978515,
+        "l2_loss": 4.358876752853393,
+        "l1_loss": 50.90618553161621,
         "l0": 40.0,
-        "frac_variance_explained": 0.9578053653240204,
-        "cossim": 0.9478691875934601,
-        "l2_ratio": 0.9478908002376556,
-        "relative_reconstruction_bias": 0.999762898683548,
-        "loss_original": 3.3361297130584715,
-        "loss_reconstructed": 3.8404462814331053,
-        "loss_zero": 13.251659297943116,
-        "frac_recovered": 0.948982036113739,
-        "frac_alive": 0.99951171875,
+        "frac_variance_explained": 0.9577824175357819,
+        "cossim": 0.9476200461387634,
+        "l2_ratio": 0.9476299166679383,
+        "relative_reconstruction_bias": 0.9996505916118622,
+        "frac_alive": 1.0,
     },
     "AutoEncoder": {
-        "l2_loss": 6.822444677352905,
-        "l1_loss": 19.382131576538086,
-        "l0": 37.45087890625,
-        "frac_variance_explained": 0.8993501663208008,
-        "cossim": 0.8791120409965515,
-        "l2_ratio": 0.74552041888237,
-        "relative_reconstruction_bias": 0.9595054805278778,
-        "loss_original": 3.3361297130584715,
-        "loss_reconstructed": 5.208198881149292,
-        "loss_zero": 13.251659297943116,
-        "frac_recovered": 0.8106247961521149,
-        "frac_alive": 0.99658203125,
+        "l2_loss": 6.8308186531066895,
+        "l1_loss": 19.398421669006346,
+        "l0": 37.4469970703125,
+        "frac_variance_explained": 0.9003101229667664,
+        "cossim": 0.8782103300094605,
+        "l2_ratio": 0.7444103538990021,
+        "relative_reconstruction_bias": 0.960041344165802,
+        "frac_alive": 0.9970703125,
     },
 }
 
@@ -73,7 +67,10 @@ def test_sae_training():
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
 
-    model = LanguageModel(MODEL_NAME, dispatch=True, device_map=DEVICE)
+    # model = LanguageModel(MODEL_NAME, dispatch=True, device_map=DEVICE)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME, device_map="auto", torch_dtype=t.float32
+    ).to(DEVICE)
 
     context_length = 128
     llm_batch_size = 512  # Fits on a 24GB GPU
@@ -195,7 +192,9 @@ def test_evaluation():
     random.seed(RANDOM_SEED)
     t.manual_seed(RANDOM_SEED)
 
-    model = LanguageModel(MODEL_NAME, dispatch=True, device_map=DEVICE)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME, device_map="auto", torch_dtype=t.float32
+    ).to(DEVICE)
     ae_paths = get_nested_folders(SAVE_DIR)
 
     context_length = 128

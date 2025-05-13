@@ -3,7 +3,11 @@ import zstandard as zstd
 import io
 import json
 import os
-from nnsight import LanguageModel
+from transformers import AutoModelForCausalLM
+from fractions import Fraction
+import random
+from transformers import AutoTokenizer
+import torch as t
 
 from .trainers.top_k import AutoEncoderTopK
 from .trainers.batch_top_k import BatchTopKSAE
@@ -88,13 +92,61 @@ def load_dictionary(base_path: str, device: str) -> tuple:
     return dictionary, config
 
 
-def get_submodule(model: LanguageModel, layer: int):
+def get_submodule(model: AutoModelForCausalLM, layer: int):
     """Gets the residual stream submodule"""
-    model_name = model._model_key
+    model_name = model.name_or_path
 
-    if "pythia" in model_name:
+    if model.config.architectures[0] == "GPTNeoXForCausalLM":
         return model.gpt_neox.layers[layer]
-    elif "gemma" in model_name:
+    elif (
+        model.config.architectures[0] == "Qwen2ForCausalLM"
+        or model.config.architectures[0] == "Gemma2ForCausalLM"
+    ):
         return model.model.layers[layer]
     else:
         raise ValueError(f"Please add submodule for model {model_name}")
+
+
+def truncate_model(model: AutoModelForCausalLM, layer: int):
+    """From tilde-research/activault
+    https://github.com/tilde-research/activault/blob/db6d1e4e36c2d3eb4fdce79e72be94f387eccee1/pipeline/setup.py#L74
+    This provides significant memory savings by deleting all layers that aren't needed for the given layer.
+    You should probably test this before using it"""
+    import gc
+
+    total_params_before = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters before truncation: {total_params_before:,}")
+
+    if (
+        model.config.architectures[0] == "Qwen2ForCausalLM"
+        or model.config.architectures[0] == "Gemma2ForCausalLM"
+    ):
+        removed_layers = model.model.layers[layer + 1 :]
+
+        model.model.layers = model.model.layers[: layer + 1]
+
+        del removed_layers
+        del model.lm_head
+
+        model.lm_head = t.nn.Identity()
+
+    elif model.config.architectures[0] == "GPTNeoXForCausalLM":
+        removed_layers = model.gpt_neox.layers[layer + 1 :]
+
+        model.gpt_neox.layers = model.gpt_neox.layers[: layer + 1]
+
+        del removed_layers
+        del model.embed_out
+
+        model.embed_out = t.nn.Identity()
+
+    else:
+        raise ValueError(f"Please add truncation for model {model.name_or_path}")
+
+    total_params_after = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters after truncation: {total_params_after:,}")
+
+    gc.collect()
+    t.cuda.empty_cache()
+
+    return model
