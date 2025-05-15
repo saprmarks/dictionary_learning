@@ -60,7 +60,7 @@ Specifically, this repository supports the following trainers:
 - [`StandardTrainer`](trainers/dictionary_learning/standard.py): Implements a training scheme similar to that of [Bricken et al., 2023](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder).
 - [`GatedSAETrainer`](trainers/dictionary_learning/gdm.py): Implements the training scheme for Gated SAEs described in [Rajamanoharan et al., 2024](https://arxiv.org/abs/2404.16014).
 - [`TopKSAETrainer`](trainers/dictionary_learning/top_k.py): Implemented the training scheme for Top-K SAEs described in [Gao et al., 2024](https://arxiv.org/abs/2406.04093).
-- [`BatchTopKSAETrainer`](trainers/batch_top_k.py): Implemented the training scheme for Batch Top-K SAEs described in [Bussmann et al., 2024](https://arxiv.org/abs/2412.06410).
+- [`BatchTopKSAETrainer`](trainers/dictionary_learning/batch_top_k.py): Implemented the training scheme for Batch Top-K SAEs described in [Bussmann et al., 2024](https://arxiv.org/abs/2412.06410).
 - [`JumpReluTrainer`](trainers/dictionary_learning/jumprelu.py): Implemented the training scheme for JumpReLU SAEs described in [Rajamanoharan et al., 2024](https://arxiv.org/abs/2407.14435).
 - [`PAnnealTrainer`](trainers/dictionary_learning/p_anneal.py): Extends the `StandardTrainer` by providing the option to anneal the sparsity parameter p.
 - [`GatedAnnealTrainer`](trainers/dictionary_learning/gated_anneal.py): Extends the `GatedSAETrainer` by providing the option for p-annealing, similar to `PAnnealTrainer`.
