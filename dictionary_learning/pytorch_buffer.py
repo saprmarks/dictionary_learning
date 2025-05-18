@@ -123,6 +123,9 @@ class ActivationBuffer:
 
         if not self.tokenizer.pad_token:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        
+        if self.remove_bos:
+            assert self.tokenizer.padding_side == "right", "Padding side must be right (bos-trimming logic assumes right padding)"
 
     def __iter__(self):
         return self
@@ -194,6 +197,7 @@ class ActivationBuffer:
                 hidden_states = collect_activations(self.model, self.submodule, input)
             attn_mask = input["attention_mask"]
             if self.remove_bos:
+                assert self.tokenizer.padding_side == "right", "Padding side must be right (bos-trimming logic assumes right padding)"
                 hidden_states = hidden_states[:, 1:, :]
                 attn_mask = attn_mask[:, 1:]
             hidden_states = hidden_states[attn_mask != 0]
