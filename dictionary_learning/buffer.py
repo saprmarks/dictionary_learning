@@ -56,13 +56,8 @@ class ActivationBuffer:
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
-        self.remove_bos = remove_bos
+        self.remove_bos = remove_bos and (self.model.tokenizer.bos_token_id is not None)
         self.add_special_tokens = add_special_tokens
-
-        print(self.model.tokenizer.padding_side)
-
-        if self.remove_bos:
-            assert self.model.tokenizer.padding_side == "right", "Padding side must be right (bos-trimming logic assumes right padding)"
 
     def __iter__(self):
         return self
@@ -138,15 +133,15 @@ class ActivationBuffer:
                     input = self.model.inputs.save()
 
                     self.submodule.output.stop()
-            attn_mask = input.value[1]["attention_mask"]
+
+            mask = (input.value[1]["attention_mask"] != 0)
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
                 hidden_states = hidden_states[0]
             if self.remove_bos:
-                assert self.model.tokenizer.padding_side == "right", "Padding side must be right (bos-trimming logic assumes right padding)"
-                hidden_states = hidden_states[:, 1:, :]
-                attn_mask = attn_mask[:, 1:]
-            hidden_states = hidden_states[attn_mask != 0]
+                bos_mask = (input.value[1]["input_ids"] == self.model.tokenizer.bos_token_id)
+                mask = mask & ~bos_mask
+            hidden_states = hidden_states[mask]
 
             remaining_space = self.activation_buffer_size - current_idx
             assert remaining_space > 0
