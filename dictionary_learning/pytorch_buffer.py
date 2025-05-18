@@ -117,9 +117,9 @@ class ActivationBuffer:
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
-        self.remove_bos = remove_bos
         self.add_special_tokens = add_special_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(model.name_or_path)
+        self.remove_bos = remove_bos and (self.tokenizer.bos_token_id is not None)
 
         if not self.tokenizer.pad_token:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -192,11 +192,11 @@ class ActivationBuffer:
             with t.no_grad():
                 input = self.tokenized_batch()
                 hidden_states = collect_activations(self.model, self.submodule, input)
-            attn_mask = input["attention_mask"]
+            mask = (input["attention_mask"] != 0)
             if self.remove_bos:
-                hidden_states = hidden_states[:, 1:, :]
-                attn_mask = attn_mask[:, 1:]
-            hidden_states = hidden_states[attn_mask != 0]
+                bos_mask = (input["input_ids"] == self.tokenizer.bos_token_id)
+                mask = mask & ~bos_mask
+            hidden_states = hidden_states[mask]
 
             remaining_space = self.activation_buffer_size - current_idx
             assert remaining_space > 0
