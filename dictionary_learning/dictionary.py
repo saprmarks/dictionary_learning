@@ -150,29 +150,43 @@ class IdentityDict(Dictionary, nn.Module):
     An identity dictionary, i.e. the identity function.
     """
 
-    def __init__(self, activation_dim=None):
+    def __init__(self, activation_dim=None, dtype=None, device=None):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = activation_dim
+        self.device = device
+        self.dtype = dtype
 
     def encode(self, x):
+        if self.device is not None:
+            x = x.to(self.device)
+        if self.dtype is not None:
+            x = x.to(self.dtype)
         return x
 
     def decode(self, f):
+        if self.device is not None:
+            f = f.to(self.device)
+        if self.dtype is not None:
+            f = f.to(self.dtype)
         return f
 
     def forward(self, x, output_features=False, ghost_mask=None):
+        if self.device is not None:
+            x = x.to(self.device)
+        if self.dtype is not None:
+            x = x.to(self.dtype)
         if output_features:
             return x, x
         else:
             return x
 
     @classmethod
-    def from_pretrained(cls, path, dtype=t.float, device=None):
+    def from_pretrained(cls, activation_dim, path, dtype=None, device=None):
         """
         Load a pretrained dictionary from a file.
         """
-        return cls(None)
+        return cls(activation_dim, device=device, dtype=dtype)
 
 
 class GatedAutoEncoder(Dictionary, nn.Module):
