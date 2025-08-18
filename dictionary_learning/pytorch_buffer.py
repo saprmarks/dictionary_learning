@@ -119,7 +119,12 @@ class ActivationBuffer:
         self.device = device
         self.add_special_tokens = add_special_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(model.name_or_path)
-        self.remove_bos = remove_bos and (self.tokenizer.bos_token_id is not None)
+        self.remove_bos = remove_bos
+
+        if remove_bos and self.tokenizer.bos_token_id is None:
+            print(
+                "\n\n\nWARNING: remove_bos is True but tokenizer does not have a bos token. We are removing the first non-pad token instead. Don't use sequence packing.\n\n\n"
+            )
 
         if not self.tokenizer.pad_token:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -192,10 +197,17 @@ class ActivationBuffer:
             with t.no_grad():
                 input = self.tokenized_batch()
                 hidden_states = collect_activations(self.model, self.submodule, input)
-            mask = (input["attention_mask"] != 0)
+            mask = input["attention_mask"] != 0
             if self.remove_bos:
-                bos_mask = (input["input_ids"] == self.tokenizer.bos_token_id)
-                mask = mask & ~bos_mask
+                if self.tokenizer.bos_token_id is not None:
+                    bos_mask = input["input_ids"] == self.tokenizer.bos_token_id
+                    mask = mask & ~bos_mask
+                else:
+                    # some models (like Qwen) don't have a bos token, so we need to remove the first non-pad token
+                    assert mask.dim() == 2, "expected shape (batch_size, seq_len)"
+                    first_one = (mask.to(t.int64).cumsum(dim=1) == 1) & mask
+                    mask = mask & ~first_one
+
             hidden_states = hidden_states[mask]
 
             remaining_space = self.activation_buffer_size - current_idx

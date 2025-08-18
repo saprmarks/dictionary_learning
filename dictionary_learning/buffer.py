@@ -56,8 +56,14 @@ class ActivationBuffer:
         self.refresh_batch_size = refresh_batch_size
         self.out_batch_size = out_batch_size
         self.device = device
-        self.remove_bos = remove_bos and (self.model.tokenizer.bos_token_id is not None)
         self.add_special_tokens = add_special_tokens
+        self.remove_bos = remove_bos
+
+        if remove_bos and self.model.tokenizer.bos_token_id is None:
+            print(
+                "\n\n\nWARNING: remove_bos is True but tokenizer does not have a bos token. We are removing the first non-pad token instead. Don't use sequence packing.\n\n\n"
+            )
+            
 
     def __iter__(self):
         return self
@@ -138,9 +144,17 @@ class ActivationBuffer:
             hidden_states = hidden_states.value
             if isinstance(hidden_states, tuple):
                 hidden_states = hidden_states[0]
+                
             if self.remove_bos:
-                bos_mask = (input.value[1]["input_ids"] == self.model.tokenizer.bos_token_id)
-                mask = mask & ~bos_mask
+                if self.model.tokenizer.bos_token_id is not None:
+                    bos_mask = input.value[1]["input_ids"] == self.model.tokenizer.bos_token_id
+                    mask = mask & ~bos_mask
+                else:
+                    # some models (like Qwen) don't have a bos token, so we need to remove the first non-pad token
+                    assert mask.dim() == 2, "expected shape (batch_size, seq_len)"
+                    first_one = (mask.to(t.int64).cumsum(dim=1) == 1) & mask
+                    mask = mask & ~first_one
+
             hidden_states = hidden_states[mask]
 
             remaining_space = self.activation_buffer_size - current_idx
