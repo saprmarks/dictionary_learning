@@ -15,12 +15,16 @@ We also provide a [demonstration](https://github.com/adamkarvonen/dictionary_lea
 
 # Using trained dictionaries
 
-You can load and used a pretrained dictionary as follows
+You can load and used a pretrained dictionary as follows.
+Also, look in utils.py to see more useful functions in order to load SAEs.
 ```python
-from dictionary_learning import AutoEncoder
+from dictionary_learning import AutoEncoder, utils
 
-# load autoencoder
+# load autoencoder (This specifically loads standard SAE, not other architectures)
 ae = AutoEncoder.from_pretrained("path/to/dictionary/weights")
+
+# or you can use this method from utils to load any architecture
+ae, config = utils.load_dictionary("path/to/dictionary/weights", device=device)
 
 # get NN activations using your preferred method: hooks, transformer_lens, nnsight, etc. ...
 # for now we'll just use random activations
