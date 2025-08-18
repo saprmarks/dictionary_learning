@@ -75,22 +75,28 @@ Another key object is the `ActivationBuffer`, defined in `buffer.py`. Following 
 An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a submodule (e.g. an MLP), and a generator which yields strings (the text data). It processes a large number of strings, up to some capacity, and saves the submodule's activations. You sample batches from it, and when it is half-depleted, it refreshes itself with new text data.
 
 Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
+
+NOTE: This is a simple reference example. For an example with standard hyperparameter settings, HuggingFace dataset usage, etc, we recommend referring to this [demonstration](https://github.com/adamkarvonen/dictionary_learning_demo).
 ```python
 from nnsight import LanguageModel
-from dictionary_learning import ActivationBuffer, AutoEncoder
-from dictionary_learning.trainers import StandardTrainer
+from dictionary_learning import ActivationBuffer
+from dictionary_learning.trainers.top_k import TopKTrainer, AutoEncoderTopK
 from dictionary_learning.training import trainSAE
 
 device = "cuda:0"
-model_name = "EleutherAI/pythia-70m-deduped" # can be any Huggingface model
+model_name = "EleutherAI/pythia-70m-deduped"  # can be any Huggingface model
 
 model = LanguageModel(
     model_name,
     device_map=device,
 )
-submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
-activation_dim = 512 # output dimension of the MLP
+layer = 1
+submodule = model.gpt_neox.layers[1].mlp  # layer 1 MLP
+activation_dim = 512  # output dimension of the MLP
 dictionary_size = 16 * activation_dim
+llm_batch_size = 16
+sae_batch_size = 128
+training_steps = 20
 
 # data must be an iterator that outputs strings
 data = iter(
@@ -99,30 +105,43 @@ data = iter(
         "In real life, for training a dictionary",
         "you would need much more data than this",
     ]
+    * 100000
 )
+
 buffer = ActivationBuffer(
     data=data,
     model=model,
     submodule=submodule,
-    d_submodule=activation_dim, # output dimension of the model component
-    n_ctxs=3e4,  # you can set this higher or lower dependong on your available memory
+    d_submodule=activation_dim,  # output dimension of the model component
+    n_ctxs=int(
+        1e2
+    ),  # you can set this higher or lower depending on your available memory
     device=device,
+    refresh_batch_size=llm_batch_size,
+    out_batch_size=sae_batch_size,
 )  # buffer will yield batches of tensors of dimension = submodule's output dimension
 
 trainer_cfg = {
-    "trainer": StandardTrainer,
-    "dict_class": AutoEncoder,
+    "trainer": TopKTrainer,
+    "dict_class": AutoEncoderTopK,
     "activation_dim": activation_dim,
     "dict_size": dictionary_size,
     "lr": 1e-3,
     "device": device,
+    "steps": training_steps,
+    "layer": layer,
+    "lm_name": model_name,
+    "warmup_steps": 1,
+    "k": 100,
 }
 
 # train the sparse autoencoder (SAE)
 ae = trainSAE(
     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
     trainer_configs=[trainer_cfg],
+    steps=training_steps,  # The number of training steps. Total trained tokens = steps * batch_size
 )
+
 ```
 Some technical notes our training infrastructure and supported features:
 * Training uses the `ConstrainedAdam` optimizer defined in `training.py`. This is a variant of Adam which supports constraining the `AutoEncoder`'s decoder weights to be norm 1.
