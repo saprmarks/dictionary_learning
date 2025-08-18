@@ -34,11 +34,15 @@ class BatchTopKSAE(Dictionary, nn.Module):
         self.encoder.bias.data.zero_()
         self.b_dec = nn.Parameter(t.zeros(activation_dim))
 
-    def encode(self, x: t.Tensor, return_active: bool = False, use_threshold: bool = True):
+    def encode(
+        self, x: t.Tensor, return_active: bool = False, use_threshold: bool = True
+    ):
         post_relu_feat_acts_BF = nn.functional.relu(self.encoder(x - self.b_dec))
 
         if use_threshold:
-            encoded_acts_BF = post_relu_feat_acts_BF * (post_relu_feat_acts_BF > self.threshold)
+            encoded_acts_BF = post_relu_feat_acts_BF * (
+                post_relu_feat_acts_BF > self.threshold
+            )
         else:
             # Flatten and perform batch top-k
             flattened_acts = post_relu_feat_acts_BF.flatten()
@@ -105,6 +109,7 @@ class BatchTopKTrainer(SAETrainer):
         decay_start: Optional[int] = None,  # when does the lr decay start
         threshold_beta: float = 0.999,
         threshold_start_step: int = 1000,
+        k_anneal_steps: Optional[int] = None,
         seed: Optional[int] = None,
         device: Optional[str] = None,
         wandb_name: str = "BatchTopKSAE",
@@ -122,6 +127,7 @@ class BatchTopKTrainer(SAETrainer):
         self.k = k
         self.threshold_beta = threshold_beta
         self.threshold_start_step = threshold_start_step
+        self.k_anneal_steps = k_anneal_steps
 
         if seed is not None:
             t.manual_seed(seed)
@@ -146,16 +152,42 @@ class BatchTopKTrainer(SAETrainer):
         self.dead_feature_threshold = 10_000_000
         self.top_k_aux = activation_dim // 2  # Heuristic from B.1 of the paper
         self.num_tokens_since_fired = t.zeros(dict_size, dtype=t.long, device=device)
-        self.logging_parameters = ["effective_l0", "dead_features", "pre_norm_auxk_loss"]
+        self.logging_parameters = [
+            "effective_l0",
+            "dead_features",
+            "pre_norm_auxk_loss",
+        ]
         self.effective_l0 = -1
         self.dead_features = -1
         self.pre_norm_auxk_loss = -1
 
-        self.optimizer = t.optim.Adam(self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999))
+        self.optimizer = t.optim.Adam(
+            self.ae.parameters(), lr=self.lr, betas=(0.9, 0.999)
+        )
 
         lr_fn = get_lr_schedule(steps, warmup_steps, decay_start=decay_start)
 
         self.scheduler = t.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lr_fn)
+
+    def update_annealed_k(
+        self, step: int, activation_dim: int, k_anneal_steps: Optional[int] = None
+    ) -> None:
+        """Update k buffer in-place with annealed value"""
+        if k_anneal_steps is None:
+            return
+
+        assert 0 <= k_anneal_steps < self.steps, (
+            "k_anneal_steps must be >= 0 and < steps."
+        )
+        # self.k is the target k set for the trainer, not the dictionary's current k
+        assert activation_dim > self.k, "activation_dim must be greater than k"
+
+        step = min(step, k_anneal_steps)
+        ratio = step / k_anneal_steps
+        annealed_value = activation_dim * (1 - ratio) + self.k * ratio
+
+        # Update in-place
+        self.ae.k.fill_(int(annealed_value))
 
     def get_auxiliary_loss(self, residual_BD: t.Tensor, post_relu_acts_BF: t.Tensor):
         dead_features = self.num_tokens_since_fired >= self.dead_feature_threshold
@@ -170,19 +202,28 @@ class BatchTopKTrainer(SAETrainer):
             auxk_acts, auxk_indices = auxk_latents.topk(k_aux, sorted=False)
 
             auxk_buffer_BF = t.zeros_like(post_relu_acts_BF)
-            auxk_acts_BF = auxk_buffer_BF.scatter_(dim=-1, index=auxk_indices, src=auxk_acts)
+            auxk_acts_BF = auxk_buffer_BF.scatter_(
+                dim=-1, index=auxk_indices, src=auxk_acts
+            )
 
             # Note: decoder(), not decode(), as we don't want to apply the bias
             x_reconstruct_aux = self.ae.decoder(auxk_acts_BF)
             l2_loss_aux = (
-                (residual_BD.float() - x_reconstruct_aux.float()).pow(2).sum(dim=-1).mean()
+                (residual_BD.float() - x_reconstruct_aux.float())
+                .pow(2)
+                .sum(dim=-1)
+                .mean()
             )
 
             self.pre_norm_auxk_loss = l2_loss_aux
 
             # normalization from OpenAI implementation: https://github.com/openai/sparse_autoencoder/blob/main/sparse_autoencoder/kernels.py#L614
-            residual_mu = residual_BD.mean(dim=0)[None, :].broadcast_to(residual_BD.shape)
-            loss_denom = (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
+            residual_mu = residual_BD.mean(dim=0)[None, :].broadcast_to(
+                residual_BD.shape
+            )
+            loss_denom = (
+                (residual_BD.float() - residual_mu.float()).pow(2).sum(dim=-1).mean()
+            )
             normalized_auxk_loss = l2_loss_aux / loss_denom
 
             return normalized_auxk_loss.nan_to_num(0.0)
@@ -220,7 +261,7 @@ class BatchTopKTrainer(SAETrainer):
 
         e = x - x_hat
 
-        self.effective_l0 = self.k
+        self.effective_l0 = self.ae.k.item()
 
         num_tokens_in_step = x.size(0)
         did_fire = t.zeros_like(self.num_tokens_since_fired, dtype=t.bool)
@@ -239,7 +280,11 @@ class BatchTopKTrainer(SAETrainer):
                 x,
                 x_hat,
                 f,
-                {"l2_loss": l2_loss.item(), "auxk_loss": auxk_loss.item(), "loss": loss.item()},
+                {
+                    "l2_loss": l2_loss.item(),
+                    "auxk_loss": auxk_loss.item(),
+                    "loss": loss.item(),
+                },
             )
 
     def update(self, step, x):
@@ -263,6 +308,7 @@ class BatchTopKTrainer(SAETrainer):
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.scheduler.step()
+        self.update_annealed_k(step, self.ae.activation_dim, self.k_anneal_steps)
 
         # Make sure the decoder is still unit-norm
         self.ae.decoder.weight.data = set_decoder_norm_to_unit_norm(
