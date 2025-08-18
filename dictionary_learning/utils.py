@@ -290,6 +290,7 @@ def get_submodule(model: AutoModelForCausalLM, layer: int):
     elif (
         model.config.architectures[0] == "Qwen2ForCausalLM"
         or model.config.architectures[0] == "Gemma2ForCausalLM"
+        or model.config.architectures[0] == "Qwen3ForCausalLM"
     ):
         return model.model.layers[layer]
     else:
@@ -309,6 +310,7 @@ def truncate_model(model: AutoModelForCausalLM, layer: int):
     if (
         model.config.architectures[0] == "Qwen2ForCausalLM"
         or model.config.architectures[0] == "Gemma2ForCausalLM"
+        or model.config.architectures[0] == "Qwen3ForCausalLM"
     ):
         removed_layers = model.model.layers[layer + 1 :]
 
