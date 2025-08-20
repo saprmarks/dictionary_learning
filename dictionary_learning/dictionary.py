@@ -7,6 +7,7 @@ import torch as t
 import torch.nn as nn
 import torch.nn.init as init
 import einops
+from typing import Optional
 
 @t.no_grad()
 def set_decoder_norm_to_unit_norm(
