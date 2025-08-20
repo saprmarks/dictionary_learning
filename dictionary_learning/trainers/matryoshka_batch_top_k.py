@@ -6,11 +6,10 @@ from collections import namedtuple
 from typing import Optional
 from math import isclose
 
-from ..dictionary import Dictionary
+from ..dictionary import Dictionary, set_decoder_norm_to_unit_norm
 from ..trainers.trainer import (
     SAETrainer,
     get_lr_schedule,
-    set_decoder_norm_to_unit_norm,
     remove_gradient_parallel_to_decoder_directions,
 )
 

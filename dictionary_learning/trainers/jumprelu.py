@@ -5,12 +5,11 @@ import torch.autograd as autograd
 from torch import nn
 from typing import Optional
 
-from ..dictionary import Dictionary, JumpReluAutoEncoder
+from ..dictionary import Dictionary, JumpReluAutoEncoder, set_decoder_norm_to_unit_norm
 from ..trainers.trainer import (
     SAETrainer,
     get_lr_schedule,
     get_sparsity_warmup_fn,
-    set_decoder_norm_to_unit_norm,
     remove_gradient_parallel_to_decoder_directions,
 )
 
