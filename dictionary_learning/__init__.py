@@ -5,6 +5,7 @@ from .dictionary import (
     GatedAutoEncoder,
     JumpReluAutoEncoder,
     BatchTopKSAE,
+    MatryoshkaBatchTopKSAE,
 )
 from .buffer import ActivationBuffer
 
@@ -13,5 +14,6 @@ __all__ = [
     "GatedAutoEncoder",
     "JumpReluAutoEncoder",
     "BatchTopKSAE",
+    "MatryoshkaBatchTopKSAE",
     "ActivationBuffer",
 ]
