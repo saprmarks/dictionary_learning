@@ -74,7 +74,7 @@ class ActivationBuffer:
     Implements a buffer of activations. The buffer stores activations from a model,
     yields them in batches, and refreshes them when the buffer is less than half full.
 
-    remove_high_norm: remove all activations with norm greater than median norm * remove_high_norm. 10 is a good default.
+    max_activation_norm_multiple: remove all activations with norm greater than median norm * max_activation_norm_multiple. 10 is a good default.
     This is useful for models like Qwen which have random, unpredictable high norm activation sinks which reduce training effectiveness.
     """
 
@@ -92,7 +92,7 @@ class ActivationBuffer:
         device="cpu",  # device on which to store the activations
         remove_bos: bool = False,
         add_special_tokens: bool = True,
-        remove_high_norm: int | None = None,
+        max_activation_norm_multiple: int | None = None,
     ):
         if io not in ["in", "out"]:
             raise ValueError("io must be either 'in' or 'out'")
@@ -124,7 +124,7 @@ class ActivationBuffer:
         self.add_special_tokens = add_special_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(model.name_or_path)
         self.remove_bos = remove_bos
-        self.remove_high_norm = remove_high_norm
+        self.remove_high_norm = max_activation_norm_multiple
 
         if remove_bos and self.tokenizer.bos_token_id is None:
             print(
