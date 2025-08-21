@@ -26,7 +26,7 @@ def new_wandb_process(config, log_queue, entity, project):
             log = log_queue.get(timeout=1)
             if log == "DONE":
                 break
-            wandb.log(log)
+            wandb.log(**log)
         except Empty:
             continue
     wandb.finish()
@@ -78,7 +78,7 @@ def log_stats(
                 log[f"{name}"] = value
 
             if log_queues:
-                log_queues[i].put(log)
+                log_queues[i].put({"data":log, "step":step})
 
 def get_norm_factor(data, steps: int) -> float:
     """Per Section 3.1, find a fixed scalar factor so activation vectors have unit mean squared norm.
