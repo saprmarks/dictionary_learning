@@ -61,26 +61,6 @@ class ConstrainedAdam(torch.optim.Adam):
                 p /= p.norm(dim=0, keepdim=True)
 
 
-# The next two functions could be replaced with the ConstrainedAdam Optimizer
-@torch.no_grad()
-def set_decoder_norm_to_unit_norm(
-    W_dec_DF: torch.nn.Parameter, activation_dim: int, d_sae: int
-) -> torch.Tensor:
-    """There's a major footgun here: we use this with both nn.Linear and nn.Parameter decoders.
-    nn.Linear stores the decoder weights in a transposed format (d_model, d_sae). So, we pass the dimensions in
-    to catch this error."""
-
-    D, F = W_dec_DF.shape
-
-    assert D == activation_dim
-    assert F == d_sae
-
-    eps = torch.finfo(W_dec_DF.dtype).eps
-    norm = torch.norm(W_dec_DF.data, dim=0, keepdim=True)
-    W_dec_DF.data /= norm + eps
-    return W_dec_DF.data
-
-
 @torch.no_grad()
 def remove_gradient_parallel_to_decoder_directions(
     W_dec_DF: torch.Tensor,
