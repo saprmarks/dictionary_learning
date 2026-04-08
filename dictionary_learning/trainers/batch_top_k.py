@@ -79,7 +79,7 @@ class BatchTopKSAE(Dictionary, nn.Module):
 
     @classmethod
     def from_pretrained(cls, path, k=None, device=None, **kwargs) -> "BatchTopKSAE":
-        state_dict = t.load(path)
+        state_dict = t.load(path, weights_only=True)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
         if k is None:
             k = state_dict["k"].item()

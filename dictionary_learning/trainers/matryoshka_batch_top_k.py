@@ -121,7 +121,7 @@ class MatryoshkaBatchTopKSAE(Dictionary, nn.Module):
     def from_pretrained(
         cls, path, k=None, device=None, **kwargs
     ) -> "MatryoshkaBatchTopKSAE":
-        state_dict = t.load(path)
+        state_dict = t.load(path, weights_only=True)
         activation_dim, dict_size = state_dict["W_enc"].shape
         if k is None:
             k = state_dict["k"].item()
