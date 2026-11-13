@@ -167,7 +167,7 @@ class JumpReluTrainer(nn.Module, SAETrainer):
         recon = self.ae.decode(f)
 
         recon_loss = (x - recon).pow(2).sum(dim=-1).mean()
-        l0 = StepFunction.apply(f, self.ae.threshold, self.bandwidth).sum(dim=-1).mean()
+        l0 = StepFunction.apply(pre_jump, self.ae.threshold, self.bandwidth).sum(dim=-1).mean()
 
         sparsity_loss = (
             self.sparsity_coefficient * ((l0 / self.target_l0) - 1).pow(2) * sparsity_scale
