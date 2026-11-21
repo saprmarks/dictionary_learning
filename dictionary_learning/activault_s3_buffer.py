@@ -118,7 +118,7 @@ def compile(byte_buffers, shuffle=True, seed=None, return_ids=False):
         # t = torch.from_numpy(n)
         # t = torch.frombuffer(combined_bytes, dtype=dtype) # torch.float32
         buffer = io.BytesIO(combined_bytes)
-        t = torch.load(buffer)
+        t = torch.load(buffer, weights_only=True)
         if (
             isinstance(t, dict) and "states" in t and not return_ids
         ):  # backward compatibility

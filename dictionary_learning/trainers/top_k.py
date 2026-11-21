@@ -137,7 +137,7 @@ class AutoEncoderTopK(Dictionary, nn.Module):
         """
         Load a pretrained autoencoder from a file.
         """
-        state_dict = t.load(path)
+        state_dict = t.load(path, weights_only=True)
         dict_size, activation_dim = state_dict["encoder.weight"].shape
 
         if k is None:
